@@ -15,8 +15,10 @@ object Categorizer {
         "מתכון", "מצרכים", "רכיבים", "אופן הכנה", "כוס קמח", "כפית", "מחממים תנור",
         "ingredients", "recette", "preparation", "préparation", "preheat"
     )
+    // "קבלה" alone is ambiguous in Hebrew (receipt / acceptance) - require real payment evidence
     private val receiptWords = listOf(
-        "סהכ לתשלום", "חשבונית", "קבלה", "לתשלום", "receipt", "invoice", "order confirmation"
+        "סהכ לתשלום", "חשבונית מס", "חשבונית", "אישור הזמנה", "אישור תשלום",
+        "receipt", "invoice", "order confirmation"
     )
     private val studyWords = listOf(
         "אוניברסיטה", "סמסטר", "תואר", "פסיכולוג", "סילבוס", "מטלה", "התמחות", "סטודנט"
@@ -41,9 +43,11 @@ object Categorizer {
             }
         }
         if (fileApp != null && chatApps.any { fileApp.lowercase().contains(it) }) return "שיחות" to src
-        if (recipeWords.any { n.contains(it) }) return "מתכונים" to src
-        if (receiptWords.any { n.contains(it) }) return "קבלות וקניות" to src
         if (studyWords.any { n.contains(it) }) return "לימודים" to src
+        if (recipeWords.any { n.contains(it) }) return "מתכונים" to src
+        if (receiptWords.any { n.contains(it) } ||
+            (n.contains("קבלה") && (n.contains("₪") || n.contains("שח") || n.contains("סהכ")))
+        ) return "קבלות וקניות" to src
         val lbl = labels.map { it.lowercase() }
         if (n.length < 60 && lbl.any { it in foodLabels }) return "אוכל" to src
         if (src != null && sites.containsValue(src)) return "כתבות" to src

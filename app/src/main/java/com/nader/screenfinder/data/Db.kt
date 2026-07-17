@@ -113,6 +113,9 @@ interface ShotDao {
 
     @Query("UPDATE shots SET category=:tag WHERE category='לא מסווג' AND labels LIKE '%' || :tag || '%'")
     suspend fun adoptTag(tag: String): Int
+
+    @Query("SELECT * FROM shots WHERE category=:c AND scanned=1")
+    suspend fun allInCategory(c: String): List<Shot>
 }
 
 @Database(entities = [Shot::class, ShotFts::class, UserRule::class], version = 2, exportSchema = false)

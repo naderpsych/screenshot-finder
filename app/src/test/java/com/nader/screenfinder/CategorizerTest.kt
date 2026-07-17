@@ -40,6 +40,23 @@ class CategorizerTest {
     }
 
     @Test
+    fun psychologyAcceptanceIsNotReceipt() {
+        val (cat, _) = Categorizer.categorize(
+            "Facebook", "קבלה לתואר שני בפסיכולוגיה קלינית - כל מה שצריך לדעת",
+            emptyList(), emptyList()
+        )
+        assertEquals("לימודים", cat)
+    }
+
+    @Test
+    fun realReceiptStillDetected() {
+        val (cat, _) = Categorizer.categorize(
+            null, "קבלה מס 1234 סהכ לתשלום 89 שח", emptyList(), emptyList()
+        )
+        assertEquals("קבלות וקניות", cat)
+    }
+
+    @Test
     fun normStripsNiqqud() {
         assertEquals("שלום", Ocr.norm("שָׁלוֹם"))
     }

@@ -67,6 +67,17 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 }
             }
         }
+        // re-check categories that had buggy rules in earlier versions
+        try {
+            val rules = dao.rules()
+            for (s in dao.allInCategory("קבלות וקניות")) {
+                val (c2, src2) = Categorizer.categorize(
+                    s.sourceApp, s.text ?: "", (s.labels ?: "").split(" "), rules
+                )
+                if (c2 != s.category) dao.update(s.copy(category = c2, source = src2))
+            }
+        } catch (e: Exception) {
+        }
         autoOrganize(dao)
         // backfill CLIP tags for shots scanned by older versions
         var clipDone = 0
