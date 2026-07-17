@@ -110,7 +110,9 @@ except TypeError:
 
 import onnx
 from onnxconverter_common import float16
-m16 = float16.convert_float_to_float16(onnx.load("vision_f32.onnx"), keep_io_types=True)
+m16 = float16.convert_float_to_float16(
+    onnx.load("vision_f32.onnx"), keep_io_types=True, op_block_list=["Conv"]
+)
 onnx.save(m16, f"{OUT}/vision.onnx")
 
 # verify fp16 model matches torch
