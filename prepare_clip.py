@@ -108,17 +108,19 @@ except TypeError:
         opset_version=14,
     )
 
-from onnxruntime.quantization import quantize_dynamic, QuantType
-quantize_dynamic("vision_f32.onnx", f"{OUT}/vision.onnx", weight_type=QuantType.QUInt8)
+import onnx
+from onnxconverter_common import float16
+m16 = float16.convert_float_to_float16(onnx.load("vision_f32.onnx"), keep_io_types=True)
+onnx.save(m16, f"{OUT}/vision.onnx")
 
-# verify quantized model matches torch
+# verify fp16 model matches torch
 import onnxruntime as ort
 s = ort.InferenceSession(f"{OUT}/vision.onnx")
 out = s.run(None, {s.get_inputs()[0].name: pix.numpy()})[0][0]
 out = out / np.linalg.norm(out)
 cos = float(np.dot(out, ref))
-print("quantized-vs-torch cosine:", cos)
-assert cos > 0.92, f"quantized model diverged: {cos}"
+print("fp16-vs-torch cosine:", cos)
+assert cos > 0.98, f"fp16 model diverged: {cos}"
 
 json.dump(
     {"concepts": [
