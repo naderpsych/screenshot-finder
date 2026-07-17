@@ -34,6 +34,16 @@ jobs:
           curl -sL -o app/src/main/assets/tessdata/heb.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/heb.traineddata
           curl -sL -o app/src/main/assets/tessdata/ara.traineddata https://github.com/tesseract-ocr/tessdata_fast/raw/main/ara.traineddata
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prepare CLIP model (on-device AI, nothing sent out at runtime)
+        run: |
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet transformers onnx onnxruntime pillow
+          python prepare_clip.py
+
       - name: Generate signing keystore (first run only)
         run: |
           if [ ! -f release.keystore ]; then

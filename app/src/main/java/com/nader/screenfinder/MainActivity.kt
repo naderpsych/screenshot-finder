@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -268,14 +269,15 @@ class MainActivity : ComponentActivity() {
                         if (name.isNotBlank() && kw.isNotBlank()) {
                             scope.launch {
                                 dao.addRule(UserRule(name = name.trim(), keywords = kw))
-                                val rules = dao.rules()
-                                dao.allScanned().forEach { s ->
-                                    val (c2, src) = Categorizer.categorize(
-                                        s.sourceApp, s.text ?: "",
-                                        (s.labels ?: "").split(" "), rules
-                                    )
-                                    if (c2 != s.category) dao.update(s.copy(category = c2, source = src))
-                                }
+                                var moved = 0
+                                kw.split(",").map { Ocr.norm(it.trim()) }
+                                    .filter { it.isNotBlank() }
+                                    .forEach { moved += dao.applyRule(name.trim(), it) }
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    "סווגו $moved תמונות לקטגוריה \"${name.trim()}\"",
+                                    Toast.LENGTH_LONG
+                                ).show()
                                 tick++
                             }
                         }

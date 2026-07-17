@@ -37,16 +37,20 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                         dao.update(s.copy(scanned = true))
                     } else {
                         val r = Ocr.process(c, bmp)
+                        val clip = Clip.tags(c, bmp)
                         bmp.recycle()
-                        val (cat, src) = Categorizer.categorize(s.sourceApp, r.text, r.labels, dao.rules())
+                        var (cat, src) = Categorizer.categorize(s.sourceApp, r.text, r.labels, dao.rules())
+                        if (cat == "לא מסווג" && clip?.cat != null) cat = clip.cat
+                        val labels = (r.labels.joinToString(" ") + " " + (clip?.words ?: "")).trim()
                         dao.update(
                             s.copy(
                                 text = r.text,
                                 norm = Ocr.norm(r.text),
-                                labels = r.labels.joinToString(" "),
+                                labels = labels,
                                 category = cat,
                                 source = src,
-                                scanned = true
+                                scanned = true,
+                                clipDone = clip != null
                             )
                         )
                     }
@@ -59,6 +63,46 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 done++
                 if (done % 10 == 0) try {
                     setForeground(info("נסרקו $done מתוך $total"))
+                } catch (e: Exception) {
+                }
+            }
+        }
+        // backfill CLIP tags for shots scanned by older versions
+        var clipDone = 0
+        while (true) {
+            val batch = dao.needClip(10)
+            if (batch.isEmpty()) break
+            for (s in batch) {
+                try {
+                    val bmp = Scanner.load(c, s.id, 512)
+                    if (bmp == null) {
+                        dao.update(s.copy(clipDone = true))
+                    } else {
+                        val clip = Clip.tags(c, bmp)
+                        bmp.recycle()
+                        if (clip == null) {
+                            dao.update(s.copy(clipDone = true))
+                        } else {
+                            var cat = s.category
+                            if ((cat == null || cat == "לא מסווג") && clip.cat != null) cat = clip.cat
+                            dao.update(
+                                s.copy(
+                                    labels = ((s.labels ?: "") + " " + clip.words).trim(),
+                                    category = cat,
+                                    clipDone = true
+                                )
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    try {
+                        dao.update(s.copy(clipDone = true))
+                    } catch (e2: Exception) {
+                    }
+                }
+                clipDone++
+                if (clipDone % 20 == 0) try {
+                    setForeground(info("זיהוי תמונות: $clipDone"))
                 } catch (e: Exception) {
                 }
             }

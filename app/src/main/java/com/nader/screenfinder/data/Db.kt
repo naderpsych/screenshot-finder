@@ -13,6 +13,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Entity(tableName = "shots")
 data class Shot(
@@ -25,7 +27,8 @@ data class Shot(
     val labels: String? = null,
     val category: String? = null,
     val source: String? = null,
-    val scanned: Boolean = false
+    val scanned: Boolean = false,
+    val clipDone: Boolean = false
 )
 
 @Fts4(contentEntity = Shot::class, tokenizer = FtsOptions.TOKENIZER_UNICODE61)
@@ -89,17 +92,30 @@ interface ShotDao {
 
     @Query("SELECT * FROM shots WHERE scanned=1")
     suspend fun allScanned(): List<Shot>
+
+    @Query("SELECT * FROM shots WHERE scanned=1 AND clipDone=0 ORDER BY date DESC LIMIT :n")
+    suspend fun needClip(n: Int): List<Shot>
+
+    @Query("UPDATE shots SET category=:cat WHERE scanned=1 AND norm LIKE '%' || :kw || '%'")
+    suspend fun applyRule(cat: String, kw: String): Int
 }
 
-@Database(entities = [Shot::class, ShotFts::class, UserRule::class], version = 1, exportSchema = false)
+@Database(entities = [Shot::class, ShotFts::class, UserRule::class], version = 2, exportSchema = false)
 abstract class Db : RoomDatabase() {
     abstract fun dao(): ShotDao
 
     companion object {
+        private val M12 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE shots ADD COLUMN clipDone INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var inst: Db? = null
         fun get(c: Context): Db = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(c.applicationContext, Db::class.java, "shots.db")
+                .addMigrations(M12)
                 .build().also { inst = it }
         }
     }
