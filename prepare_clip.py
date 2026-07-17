@@ -81,12 +81,28 @@ with torch.no_grad():
 ref = (ref / ref.norm(dim=-1, keepdim=True)).numpy()[0]
 
 # export vision encoder with projection to onnx
-vm.config.return_dict = False
-torch.onnx.export(
-    vm, (pix,), "vision_f32.onnx",
-    input_names=["pixel_values"], output_names=["image_embeds"],
-    opset_version=14,
-)
+class VisionWrap(torch.nn.Module):
+    def __init__(self, m):
+        super().__init__()
+        self.m = m
+
+    def forward(self, pixel_values):
+        return self.m(pixel_values).image_embeds
+
+wrap = VisionWrap(vm)
+wrap.eval()
+try:
+    torch.onnx.export(
+        wrap, (pix,), "vision_f32.onnx",
+        input_names=["pixel_values"], output_names=["image_embeds"],
+        opset_version=14, dynamo=False,
+    )
+except TypeError:
+    torch.onnx.export(
+        wrap, (pix,), "vision_f32.onnx",
+        input_names=["pixel_values"], output_names=["image_embeds"],
+        opset_version=14,
+    )
 
 from onnxruntime.quantization import quantize_dynamic, QuantType
 quantize_dynamic("vision_f32.onnx", f"{OUT}/vision.onnx", weight_type=QuantType.QUInt8)

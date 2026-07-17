@@ -67,6 +67,7 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 }
             }
         }
+        autoOrganize(dao)
         // backfill CLIP tags for shots scanned by older versions
         var clipDone = 0
         while (true) {

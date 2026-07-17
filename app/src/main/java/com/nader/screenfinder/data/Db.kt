@@ -98,6 +98,21 @@ interface ShotDao {
 
     @Query("UPDATE shots SET category=:cat WHERE scanned=1 AND norm LIKE '%' || :kw || '%'")
     suspend fun applyRule(cat: String, kw: String): Int
+
+    @Query("SELECT source FROM shots WHERE scanned=1 AND source IS NOT NULL GROUP BY source HAVING COUNT(*) >= :min")
+    suspend fun bigSources(min: Int): List<String>
+
+    @Query("UPDATE shots SET category='כתבות · ' || :src WHERE source=:src AND category='כתבות'")
+    suspend fun refineArticles(src: String): Int
+
+    @Query("UPDATE shots SET category=:src WHERE source=:src AND category='לא מסווג'")
+    suspend fun adoptSource(src: String): Int
+
+    @Query("SELECT labels FROM shots WHERE category='לא מסווג' AND labels IS NOT NULL AND labels != ''")
+    suspend fun unclassifiedLabels(): List<String>
+
+    @Query("UPDATE shots SET category=:tag WHERE category='לא מסווג' AND labels LIKE '%' || :tag || '%'")
+    suspend fun adoptTag(tag: String): Int
 }
 
 @Database(entities = [Shot::class, ShotFts::class, UserRule::class], version = 2, exportSchema = false)
