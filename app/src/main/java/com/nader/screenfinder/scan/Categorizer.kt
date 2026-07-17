@@ -11,19 +11,6 @@ object Categorizer {
         "alarabiya" to "אל-ערביה", "aljazeera" to "אל-ג'זירה"
     )
     private val chatApps = setOf("whatsapp", "telegram", "messenger", "messages")
-    private val recipeWords = listOf(
-        "מתכון", "מצרכים", "רכיבים", "אופן הכנה", "כוס קמח", "כפית", "מחממים תנור",
-        "ingredients", "recette", "preparation", "préparation", "preheat"
-    )
-    // "קבלה" alone is ambiguous in Hebrew (receipt / acceptance) - require real payment evidence
-    private val receiptWords = listOf(
-        "סהכ לתשלום", "חשבונית מס", "חשבונית", "אישור הזמנה", "אישור תשלום",
-        "receipt", "invoice", "order confirmation"
-    )
-    private val studyWords = listOf(
-        "אוניברסיטה", "סמסטר", "תואר", "פסיכולוג", "סילבוס", "מטלה", "התמחות", "סטודנט"
-    )
-    private val newsWords = listOf("כתבה", "חדשות", "דקות קריאה")
     private val foodLabels = setOf("food", "dessert", "cake", "dish", "cuisine", "baked goods", "fast food", "snack")
 
     fun source(text: String): String? {
@@ -32,6 +19,26 @@ object Categorizer {
         val m = Regex("([a-z0-9-]{3,})\\.(co\\.il|com|net|org|fr)").find(lower)
         return m?.value
     }
+
+    // evidence weights per category: strong signals worth more, weak ambiguous words worth little
+    private val evidence = mapOf(
+        "לימודים" to listOf(
+            3 to listOf("אוניברסיטה", "סילבוס", "סמסטר", "התמחות"),
+            2 to listOf("תואר", "פסיכולוג", "סטודנט", "מטלה", "קורס", "מרצה", "בחינה")
+        ),
+        "מתכונים" to listOf(
+            3 to listOf("מתכון", "אופן הכנה", "מצרכים", "recette", "ingredients"),
+            1 to listOf("כפית", "כוס קמח", "מחממים תנור", "preheat", "רכיבים", "אופים", "מערבבים")
+        ),
+        "קבלות וקניות" to listOf(
+            3 to listOf("חשבונית", "סהכ לתשלום", "אישור תשלום", "אישור הזמנה", "receipt", "invoice"),
+            1 to listOf("קבלה", "שח", "₪", "לתשלום", "משלוח")
+        ),
+        "כתבות" to listOf(
+            2 to listOf("כתבה", "דקות קריאה"),
+            1 to listOf("חדשות", "עיתון")
+        )
+    )
 
     // returns (category, detected source)
     fun categorize(fileApp: String?, text: String, labels: List<String>, rules: List<UserRule>): Pair<String, String?> {
@@ -42,16 +49,23 @@ object Categorizer {
                 return r.name to src
             }
         }
-        if (fileApp != null && chatApps.any { fileApp.lowercase().contains(it) }) return "שיחות" to src
-        if (studyWords.any { n.contains(it) }) return "לימודים" to src
-        if (recipeWords.any { n.contains(it) }) return "מתכונים" to src
-        if (receiptWords.any { n.contains(it) } ||
-            (n.contains("קבלה") && (n.contains("₪") || n.contains("שח") || n.contains("סהכ")))
-        ) return "קבלות וקניות" to src
+        // mini-brain: every category collects weighted evidence, best supported wins
+        val score = HashMap<String, Int>()
+        fun add(cat: String, pts: Int) {
+            score.merge(cat, pts, Int::plus)
+        }
+        if (fileApp != null && chatApps.any { fileApp.lowercase().contains(it) }) add("שיחות", 4)
+        for ((cat, groups) in evidence) {
+            for ((w, words) in groups) {
+                for (word in words) if (n.contains(word)) add(cat, w)
+            }
+        }
+        if (src != null && sites.containsValue(src)) add("כתבות", 3)
         val lbl = labels.map { it.lowercase() }
-        if (n.length < 60 && lbl.any { it in foodLabels }) return "אוכל" to src
-        if (src != null && sites.containsValue(src)) return "כתבות" to src
-        if (newsWords.any { n.contains(it) }) return "כתבות" to src
+        if (n.length < 60 && lbl.any { it in foodLabels }) add("אוכל", 3)
+
+        val best = score.entries.maxByOrNull { it.value }
+        if (best != null && best.value >= 3) return best.key to src
         return "לא מסווג" to src
     }
 }
