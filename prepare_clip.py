@@ -84,36 +84,29 @@ with torch.no_grad():
     ref = vm(pix).image_embeds
 ref = (ref / ref.norm(dim=-1, keepdim=True)).numpy()[0]
 
-# export vision encoder with projection to onnx
+# export vision encoder with projection to onnx, fp16 weights with casts inside the graph
 class VisionWrap(torch.nn.Module):
     def __init__(self, m):
         super().__init__()
         self.m = m
 
     def forward(self, pixel_values):
-        return self.m(pixel_values).image_embeds
+        return self.m(pixel_values.half()).image_embeds.float()
 
-wrap = VisionWrap(vm)
+wrap = VisionWrap(vm.half())
 wrap.eval()
 try:
     torch.onnx.export(
-        wrap, (pix,), "vision_f32.onnx",
+        wrap, (pix,), f"{OUT}/vision.onnx",
         input_names=["pixel_values"], output_names=["image_embeds"],
         opset_version=14, dynamo=False,
     )
 except TypeError:
     torch.onnx.export(
-        wrap, (pix,), "vision_f32.onnx",
+        wrap, (pix,), f"{OUT}/vision.onnx",
         input_names=["pixel_values"], output_names=["image_embeds"],
         opset_version=14,
     )
-
-import onnx
-from onnxconverter_common import float16
-m16 = float16.convert_float_to_float16(
-    onnx.load("vision_f32.onnx"), keep_io_types=True, op_block_list=["Conv"]
-)
-onnx.save(m16, f"{OUT}/vision.onnx")
 
 # verify fp16 model matches torch
 import onnxruntime as ort
