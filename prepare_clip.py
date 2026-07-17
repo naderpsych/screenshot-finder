@@ -2,7 +2,7 @@
 import json, os
 import numpy as np
 import torch
-from transformers import CLIPModel, CLIPProcessor, CLIPVisionModelWithProjection
+from transformers import CLIPProcessor, CLIPTextModelWithProjection, CLIPVisionModelWithProjection
 from PIL import Image
 
 OUT = "app/src/main/assets/clip"
@@ -61,26 +61,26 @@ CONCEPTS = [
     ("flag of israel", "דגל ישראל", ""), ("national flag", "דגל", ""),
 ]
 
-model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-model.eval()
 proc = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+tm = CLIPTextModelWithProjection.from_pretrained("openai/clip-vit-base-patch32")
+tm.eval()
+vm = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32")
+vm.eval()
 
 prompts = ["a photo of " + en for en, _, _ in CONCEPTS]
 tin = proc(text=prompts, return_tensors="pt", padding=True)
 with torch.no_grad():
-    tfeat = model.get_text_features(**tin)
+    tfeat = tm(**tin).text_embeds
 tfeat = tfeat / tfeat.norm(dim=-1, keepdim=True)
 
 # reference image embedding via torch
 img = Image.new("RGB", (224, 224), (200, 30, 30))
 pix = proc(images=img, return_tensors="pt")["pixel_values"]
 with torch.no_grad():
-    ref = model.get_image_features(pixel_values=pix)
+    ref = vm(pix).image_embeds
 ref = (ref / ref.norm(dim=-1, keepdim=True)).numpy()[0]
 
 # export vision encoder with projection to onnx
-vm = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-base-patch32")
-vm.eval()
 vm.config.return_dict = False
 torch.onnx.export(
     vm, (pix,), "vision_f32.onnx",
