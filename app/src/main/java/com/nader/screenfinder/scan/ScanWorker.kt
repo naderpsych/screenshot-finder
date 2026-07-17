@@ -40,6 +40,7 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                         val clip = Clip.tags(c, bmp)
                         bmp.recycle()
                         var (cat, src) = Categorizer.categorize(s.sourceApp, r.text, r.labels, dao.rules())
+                        if (cat == "לא מסווג") Brain.classify(c, r.text)?.let { cat = it }
                         if (cat == "לא מסווג" && clip?.cat != null) cat = clip.cat
                         val labels = (r.labels.joinToString(" ") + " " + (clip?.words ?: "")).trim()
                         dao.update(
@@ -118,6 +119,36 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 } catch (e: Exception) {
                 }
             }
+        }
+        // brain pass: let the on-device LLM read texts the rules could not classify
+        if (Brain.available(c)) {
+            var brained = 0
+            while (true) {
+                val batch = dao.needBrain(10)
+                if (batch.isEmpty()) break
+                for (s in batch) {
+                    try {
+                        val cat = Brain.classify(c, s.text ?: "")
+                        dao.update(
+                            s.copy(
+                                category = cat ?: s.category,
+                                labels = ((s.labels ?: "") + " 🧠").trim()
+                            )
+                        )
+                    } catch (e: Exception) {
+                        try {
+                            dao.update(s.copy(labels = ((s.labels ?: "") + " 🧠").trim()))
+                        } catch (e2: Exception) {
+                        }
+                    }
+                    brained++
+                    if (brained % 10 == 0) try {
+                        setForeground(info("סיווג חכם: $brained"))
+                    } catch (e: Exception) {
+                    }
+                }
+            }
+            autoOrganize(dao)
         }
         return Result.success()
     }

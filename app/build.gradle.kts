@@ -56,6 +56,7 @@ dependencies {
     implementation("com.google.mlkit:image-labeling:17.0.8")
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.7.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
+    implementation("com.google.mediapipe:tasks-genai:0.10.24")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     testImplementation("junit:junit:4.13.2")

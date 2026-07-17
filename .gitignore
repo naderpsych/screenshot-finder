@@ -4,3 +4,4 @@ local.properties
 app/src/main/assets/tessdata/
 app/src/main/assets/clip/
 vision_f32.onnx
+brain.task

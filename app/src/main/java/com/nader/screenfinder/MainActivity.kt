@@ -55,7 +55,7 @@ import com.nader.screenfinder.data.CatCount
 import com.nader.screenfinder.data.Db
 import com.nader.screenfinder.data.Shot
 import com.nader.screenfinder.data.UserRule
-import com.nader.screenfinder.scan.Categorizer
+import com.nader.screenfinder.scan.Brain
 import com.nader.screenfinder.scan.Ocr
 import com.nader.screenfinder.scan.ScanWorker
 import com.nader.screenfinder.scan.Scanner
@@ -137,6 +137,8 @@ class MainActivity : ComponentActivity() {
         var showRule by remember { mutableStateOf(false) }
         var viewer by remember { mutableStateOf<Int?>(null) }
         var tick by remember { mutableStateOf(0) }
+        var brainReady by remember { mutableStateOf(Brain.available(this)) }
+        var brainProgress by remember { mutableStateOf<Int?>(null) }
 
         LaunchedEffect(Unit) {
             while (true) {
@@ -200,6 +202,29 @@ class MainActivity : ComponentActivity() {
                     }
                     item {
                         AssistChip(onClick = { showRule = true }, label = { Text("+ קטגוריה") })
+                    }
+                    if (!brainReady && brainProgress == null) {
+                        item {
+                            AssistChip(
+                                onClick = {
+                                    brainProgress = 0
+                                    scope.launch {
+                                        val ok = Brain.download(this@MainActivity) { p -> brainProgress = p }
+                                        brainProgress = null
+                                        brainReady = Brain.available(this@MainActivity)
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            if (ok) "המוח הותקן! הסיווג החכם ירוץ ברקע" else "ההורדה נכשלה, נסה שוב על WiFi",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                        if (ok) ScanWorker.enqueue(this@MainActivity)
+                                    }
+                                },
+                                label = { Text("🧠 הורד מוח AI (~350MB)") })
+                        }
+                    }
+                    if (brainProgress != null) {
+                        item { AssistChip(onClick = {}, label = { Text("מוריד מוח... $brainProgress%") }) }
                     }
                 }
                 LazyVerticalGrid(columns = GridCells.Fixed(3)) {

@@ -116,6 +116,9 @@ interface ShotDao {
 
     @Query("SELECT * FROM shots WHERE category=:c AND scanned=1")
     suspend fun allInCategory(c: String): List<Shot>
+
+    @Query("SELECT * FROM shots WHERE category='לא מסווג' AND scanned=1 AND text IS NOT NULL AND text != '' AND (labels IS NULL OR labels NOT LIKE '%🧠%') ORDER BY date DESC LIMIT :n")
+    suspend fun needBrain(n: Int): List<Shot>
 }
 
 @Database(entities = [Shot::class, ShotFts::class, UserRule::class], version = 2, exportSchema = false)

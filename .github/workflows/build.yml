@@ -72,10 +72,20 @@ jobs:
       - name: Prepare APK
         run: cp app/build/outputs/apk/release/app-release.apk ScreenFinder.apk
 
+      - name: Fetch brain model (Qwen 0.5B, Apache-2.0)
+        run: |
+          FILE=$(curl -s "https://huggingface.co/api/models/litert-community/Qwen2.5-0.5B-Instruct?blobs=true" | \
+            python3 -c "import json,sys; d=json.load(sys.stdin); f=[(s.get('size',1<<40), s['rfilename']) for s in d['siblings'] if s['rfilename'].endswith('.task')]; f.sort(); print(f[0][1])")
+          echo "picked model file: $FILE"
+          curl -sL -o brain.task "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/$FILE"
+          ls -la brain.task
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: "ScreenFinder v${{ github.run_number }}"
-          body: "הורד את ScreenFinder.apk והתקן. עדכון מתקין מעל הגרסה הקודמת בלי לאבד נתונים."
-          files: ScreenFinder.apk
+          body: "הורד את ScreenFinder.apk והתקן. עדכון מתקין מעל הגרסה הקודמת בלי לאבד נתונים. brain.task יורד מתוך האפליקציה - אין צורך להוריד ידנית."
+          files: |
+            ScreenFinder.apk
+            brain.task
