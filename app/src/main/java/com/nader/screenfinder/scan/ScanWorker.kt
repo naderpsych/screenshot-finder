@@ -111,6 +111,25 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         return Result.success()
     }
 
+    // self-organizing categories: promote recurring sources and visual tags
+    private suspend fun autoOrganize(dao: com.nader.screenfinder.data.ShotDao) {
+        try {
+            for (src in dao.bigSources(20)) {
+                dao.refineArticles(src)
+                dao.adoptSource(src)
+            }
+            val counts = HashMap<String, Int>()
+            for (l in dao.unclassifiedLabels()) {
+                l.split(" ")
+                    .filter { w -> w.isNotBlank() && w.any { it in 'א'..'ת' } }
+                    .distinct()
+                    .forEach { counts.merge(it, 1, Int::plus) }
+            }
+            counts.filterValues { it >= 15 }.keys.forEach { dao.adoptTag(it) }
+        } catch (e: Exception) {
+        }
+    }
+
     private fun info(msg: String): ForegroundInfo {
         val n: Notification = Notification.Builder(applicationContext, "scan")
             .setContentTitle("סריקת סקרינשוטים")
