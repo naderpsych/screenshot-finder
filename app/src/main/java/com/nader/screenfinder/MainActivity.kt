@@ -220,7 +220,7 @@ class MainActivity : ComponentActivity() {
                                         if (ok) ScanWorker.enqueue(this@MainActivity)
                                     }
                                 },
-                                label = { Text("🧠 הורד מוח AI (~350MB)") })
+                                label = { Text("🧠 הורד מוח AI (~520MB, על WiFi)") })
                         }
                     }
                     if (brainProgress != null) {
