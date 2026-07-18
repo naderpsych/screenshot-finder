@@ -40,12 +40,19 @@ object Categorizer {
         )
     )
 
+    // whole-word match: "פצי" must not match inside "פציעה"
+    fun wordMatch(text: String, kw: String): Boolean =
+        Regex("(?<!\\p{L})" + Regex.escape(kw) + "(?!\\p{L})").containsMatchIn(text)
+
     // returns (category, detected source)
     fun categorize(fileApp: String?, text: String, labels: List<String>, rules: List<UserRule>): Pair<String, String?> {
         val n = Ocr.norm(text)
         val src = source(text)
         for (r in rules) {
-            if (r.keywords.split(",").any { it.trim().isNotEmpty() && n.contains(it.trim().lowercase()) }) {
+            if (r.keywords.split(",").any {
+                    val k = Ocr.norm(it.trim())
+                    k.isNotEmpty() && wordMatch(n, k)
+                }) {
                 return r.name to src
             }
         }

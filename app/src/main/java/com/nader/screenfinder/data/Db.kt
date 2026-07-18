@@ -96,8 +96,11 @@ interface ShotDao {
     @Query("SELECT * FROM shots WHERE scanned=1 AND clipDone=0 ORDER BY date DESC LIMIT :n")
     suspend fun needClip(n: Int): List<Shot>
 
-    @Query("UPDATE shots SET category=:cat WHERE scanned=1 AND norm LIKE '%' || :kw || '%'")
-    suspend fun applyRule(cat: String, kw: String): Int
+    @Query("SELECT * FROM shots WHERE scanned=1 AND norm LIKE '%' || :kw || '%'")
+    suspend fun candidates(kw: String): List<Shot>
+
+    @Query("UPDATE shots SET clipDone=0")
+    suspend fun resetClip()
 
     @Query("SELECT source FROM shots WHERE scanned=1 AND source IS NOT NULL GROUP BY source HAVING COUNT(*) >= :min")
     suspend fun bigSources(min: Int): List<String>

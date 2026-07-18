@@ -68,6 +68,31 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                 }
             }
         }
+        // expanded CLIP concepts -> re-tag everything once
+        val prefs = c.getSharedPreferences("sf", Context.MODE_PRIVATE)
+        if (prefs.getInt("conceptsVer", 1) < 2) {
+            try {
+                dao.resetClip()
+                prefs.edit().putInt("conceptsVer", 2).apply()
+            } catch (e: Exception) {
+            }
+        }
+        // heal user categories polluted by old substring matching (e.g. פצי inside פציעה)
+        try {
+            val rules = dao.rules()
+            for (r in rules) {
+                val kws = r.keywords.split(",").map { Ocr.norm(it.trim()) }.filter { it.isNotBlank() }
+                for (s in dao.allInCategory(r.name)) {
+                    if (kws.none { Categorizer.wordMatch(s.norm ?: "", it) }) {
+                        val (c2, src2) = Categorizer.categorize(
+                            s.sourceApp, s.text ?: "", (s.labels ?: "").split(" "), rules
+                        )
+                        dao.update(s.copy(category = c2, source = src2))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+        }
         // re-check categories that had buggy rules in earlier versions
         try {
             val rules = dao.rules()

@@ -56,6 +56,7 @@ import com.nader.screenfinder.data.Db
 import com.nader.screenfinder.data.Shot
 import com.nader.screenfinder.data.UserRule
 import com.nader.screenfinder.scan.Brain
+import com.nader.screenfinder.scan.Categorizer
 import com.nader.screenfinder.scan.Ocr
 import com.nader.screenfinder.scan.ScanWorker
 import com.nader.screenfinder.scan.Scanner
@@ -295,9 +296,14 @@ class MainActivity : ComponentActivity() {
                             scope.launch {
                                 dao.addRule(UserRule(name = name.trim(), keywords = kw))
                                 var moved = 0
-                                kw.split(",").map { Ocr.norm(it.trim()) }
-                                    .filter { it.isNotBlank() }
-                                    .forEach { moved += dao.applyRule(name.trim(), it) }
+                                for (k in kw.split(",").map { Ocr.norm(it.trim()) }.filter { it.isNotBlank() }) {
+                                    for (s in dao.candidates(k)) {
+                                        if (Categorizer.wordMatch(s.norm ?: "", k) && s.category != name.trim()) {
+                                            dao.update(s.copy(category = name.trim()))
+                                            moved++
+                                        }
+                                    }
+                                }
                                 Toast.makeText(
                                     this@MainActivity,
                                     "סווגו $moved תמונות לקטגוריה \"${name.trim()}\"",

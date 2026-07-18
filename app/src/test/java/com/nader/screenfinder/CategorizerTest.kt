@@ -57,6 +57,13 @@ class CategorizerTest {
     }
 
     @Test
+    fun wordMatchRespectsBoundaries() {
+        org.junit.Assert.assertTrue(Categorizer.wordMatch("קבוצת פצי החדשה", "פצי"))
+        org.junit.Assert.assertFalse(Categorizer.wordMatch("נגרמה פציעה קשה", "פצי"))
+        org.junit.Assert.assertFalse(Categorizer.wordMatch("הפציץ את המבחן", "פצי"))
+    }
+
+    @Test
     fun normStripsNiqqud() {
         assertEquals("שלום", Ocr.norm("שָׁלוֹם"))
     }
