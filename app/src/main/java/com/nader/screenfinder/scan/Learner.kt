@@ -44,7 +44,7 @@ object Learner {
  */
 object Grouper {
     private const val SIMILAR = 0.86f
-    private const val MIN_FAMILY = 8
+    private const val MIN_FAMILY = 25
     private const val MAX_FAMILIES = 300
     private const val MAX_SHOTS = 6000
 

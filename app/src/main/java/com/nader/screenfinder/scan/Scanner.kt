@@ -49,11 +49,33 @@ object Scanner {
         return null
     }
 
+    /** instant first sorting, straight from the file name - replaced later by real understanding */
+    private val appNames = mapOf(
+        "facebook" to "פייסבוק", "instagram" to "אינסטגרם", "whatsapp" to "וואטסאפ",
+        "telegram" to "טלגרם", "messenger" to "מסנג'ר", "chrome" to "דפדפן",
+        "gmail" to "מייל", "youtube" to "יוטיוב", "maps" to "מפות", "gallery" to "גלריה",
+        "photos" to "גלריה", "phone" to "טלפון", "play store" to "חנות אפליקציות",
+        "pdf viewer" to "מסמכים", "one ui home" to "מסך הבית", "tiktok" to "טיקטוק",
+        "linkedin" to "לינקדאין", "twitter" to "טוויטר", "x" to "טוויטר"
+    )
+
+    fun provisional(app: String?): String {
+        val a = app?.lowercase()?.trim() ?: return "ממתין לסריקה"
+        for ((k, v) in appNames) if (a.contains(k)) return v
+        return app
+    }
+
     suspend fun diff(c: Context, dao: ShotDao) {
         val cur = list(c)
         val known = dao.allIds().toHashSet()
         val newOnes = cur.filter { it.id !in known }
-            .map { Shot(id = it.id, name = it.name, date = it.date, sourceApp = sourceApp(it.name)) }
+            .map {
+                val app = sourceApp(it.name)
+                Shot(
+                    id = it.id, name = it.name, date = it.date, sourceApp = app,
+                    category = provisional(app)
+                )
+            }
         if (newOnes.isNotEmpty()) dao.insertAll(newOnes)
         val curIds = cur.map { it.id }.toHashSet()
         val gone = known.filter { it !in curIds }

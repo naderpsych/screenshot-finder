@@ -33,8 +33,11 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -159,6 +162,7 @@ class MainActivity : ComponentActivity() {
         var speed by remember { mutableStateOf("") }
         val prefs = remember { getSharedPreferences("sf", MODE_PRIVATE) }
         var showRule by remember { mutableStateOf(false) }
+        var showAbout by remember { mutableStateOf(false) }
         var assign by remember { mutableStateOf<Shot?>(null) }
         var viewer by remember { mutableStateOf<Int?>(null) }
         var tick by remember { mutableStateOf(0) }
@@ -222,31 +226,55 @@ class MainActivity : ComponentActivity() {
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp)
                 )
-                // always visible status - tap to restart scanning
+                // progress card: what stage we are in and how far it got
+                val total = fast.second
+                val doneCount = fast.first
+                val pct = if (total > 0) doneCount.toFloat() / total else 0f
+                val finished = total > 0 && doneCount >= total
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .padding(vertical = 6.dp)
-                        .background(Card, RoundedCornerShape(10.dp))
-                        .clickable {
-                            ScanWorker.enqueue(this@MainActivity)
-                            Toast.makeText(this@MainActivity, "הסריקה הופעלה", Toast.LENGTH_SHORT).show()
-                        }
-                        .padding(8.dp)
+                        .background(Card, RoundedCornerShape(12.dp))
+                        .clickable { showAbout = true }
+                        .padding(10.dp)
                 ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            if (finished) "✓ שלב 2 · סריקה עמוקה הושלמה"
+                            else if (total == 0) "מכין רשימת סקרינשוטים..."
+                            else "שלב 2 · סריקה עמוקה — קורא טקסט ורואה תמונות",
+                            fontSize = 13.sp, color = Accent, fontWeight = FontWeight.Bold
+                        )
+                        Text("ⓘ", fontSize = 15.sp, color = Accent)
+                    }
+                    if (total > 0) {
+                        LinearProgressIndicator(
+                            progress = { pct },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp, bottom = 4.dp)
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = Accent,
+                            trackColor = Color(0xFF2A3140)
+                        )
+                        Text(
+                            "${(pct * 100).toInt()}%  ·  $doneCount מתוך $total" +
+                                if (finished) "  ·  שלב 3: מארגן קבוצות" else "",
+                            fontSize = 12.sp, color = Color.White
+                        )
+                    }
                     Text(
-                        when {
-                            fast.second == 0 -> "גרסה ${BuildConfig.VERSION_NAME} · מחפש סקרינשוטים..."
-                            fast.first < fast.second ->
-                                "גרסה ${BuildConfig.VERSION_NAME} · נסרקו ${fast.first} מתוך ${fast.second}"
-                            deep < fast.second ->
-                                "גרסה ${BuildConfig.VERSION_NAME} · משלים הבנה: $deep מתוך ${fast.second}"
-                            else -> "גרסה ${BuildConfig.VERSION_NAME} · הכל נסרק (${fast.second})"
-                        },
-                        fontSize = 13.sp, color = Accent, fontWeight = FontWeight.Bold
+                        "✓ שלב 1 · סיווג ראשוני לפי מקור הצילום — הושלם",
+                        fontSize = 11.sp, color = Color(0xFF7BC67B),
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                     Text(
-                        speed.ifBlank { "מודד מהירות... (הקש כאן כדי להפעיל סריקה)" },
+                        speed.ifBlank { "הקש לפרטים על האפליקציה" },
                         fontSize = 11.sp, color = Color(0xFF8A94A6)
                     )
                 }
@@ -400,6 +428,58 @@ class MainActivity : ComponentActivity() {
                 },
                 confirmButton = { TextButton(onClick = { apply(custom) }) { Text("שמור") } },
                 dismissButton = { TextButton(onClick = { assign = null }) { Text("ביטול") } }
+            )
+        }
+
+        if (showAbout) {
+            AlertDialog(
+                onDismissRequest = { showAbout = false },
+                title = { Text("Screenote · גרסה ${BuildConfig.VERSION_NAME}") },
+                text = {
+                    LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                        item {
+                            Text(
+                                "מוצא סקרינשוטים לפי מה שכתוב בהם ולפי מה שרואים בהם. " +
+                                    "הכל קורה בטלפון - שום תמונה לא נשלחת לשום מקום, וגם לא נמחקת או משתנה: " +
+                                    "לאפליקציה אין בכלל הרשאת כתיבה.\n\n" +
+
+                                    "שלב 1 · סיווג ראשוני (שניות)\n" +
+                                    "כל סקרינשוט נכנס לקטגוריה זמנית לפי האפליקציה שממנה צולם - פייסבוק, " +
+                                    "וואטסאפ, דפדפן. זה מגיע משם הקובץ ולא דורש סריקה, אבל זה רק פיגום " +
+                                    "שמתחלף בהמשך.\n\n" +
+
+                                    "שלב 2 · סריקה עמוקה (שעות, ברקע)\n" +
+                                    "לכל תמונה: קריאת הטקסט שבה בעברית, ערבית, אנגלית וצרפתית; זיהוי " +
+                                    "מה רואים בתמונה עצמה; והחלטה על קטגוריה אמיתית שמחליפה את הזמנית. " +
+                                    "אפשר לצאת מהאפליקציה - זה ממשיך, וממשיך מאיפה שהפסיק.\n\n" +
+
+                                    "שלב 3 · ארגון עצמי (אוטומטי)\n" +
+                                    "האפליקציה מזהה משפחות של סקרינשוטים דומים ויוצרת להן קטגוריה בשם " +
+                                    "המילה שמשותפת לכולן. משפחה נחשבת כזו מ-25 תמונות ומעלה.\n\n" +
+
+                                    "חיפוש\n" +
+                                    "מחפש גם בטקסט וגם במשמעות הוויזואלית: \"french food\" יביא גם תמונות " +
+                                    "שלא כתוב בהן כלום, כי האפליקציה מזהה מה מופיע בהן. עברית עובדת " +
+                                    "היטב על טקסט, ובאנגלית גם החיפוש הוויזואלי מדויק יותר.\n\n" +
+
+                                    "מוח AI (רשות)\n" +
+                                    "קובץ בנפח כ-520MB שמוריד מודל שפה קטן לטלפון. הוא קורא טקסטים שהכללים " +
+                                    "לא הצליחו לסווג ומחליט לפי הבנה. אפשר להוריד, לבטל באמצע, ולמחוק בכל רגע.\n\n" +
+
+                                    "סקרינשוט חדש נסרק אוטומטית. סקרינשוט שנמחק מהטלפון נעלם גם מכאן.",
+                                fontSize = 13.sp, color = Color.White
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        ScanWorker.enqueue(this@MainActivity)
+                        Toast.makeText(this@MainActivity, "הסריקה הופעלה", Toast.LENGTH_SHORT).show()
+                        showAbout = false
+                    }) { Text("הפעל סריקה") }
+                },
+                dismissButton = { TextButton(onClick = { showAbout = false }) { Text("סגור") } }
             )
         }
 
