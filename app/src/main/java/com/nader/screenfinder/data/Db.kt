@@ -134,6 +134,9 @@ interface ShotDao {
     @Query("UPDATE shots SET category=:c WHERE id=:id AND userCat IS NULL")
     suspend fun setAutoCat(id: Long, c: String)
 
+    @Query("SELECT * FROM shots WHERE emb IS NOT NULL AND userCat IS NULL AND (category IS NULL OR category='לא מסווג') ORDER BY date DESC LIMIT :n")
+    suspend fun unclassifiedWithEmb(n: Int): List<Shot>
+
     // ---- context sharing between shots taken around the same time ----
     @Query("SELECT * FROM shots WHERE date BETWEEN :from AND :to AND id != :id AND text IS NOT NULL AND length(text) > 60 LIMIT 6")
     suspend fun neighbors(id: Long, from: Long, to: Long): List<Shot>

@@ -60,6 +60,11 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             Learner.run(dao)
         } catch (e: Exception) {
         }
+        try {
+            note("מארגן קבוצות...")
+            Grouper.run(dao)
+        } catch (e: Exception) {
+        }
         autoOrganize(dao)
         brainPass(c, dao)
         return Result.success()
