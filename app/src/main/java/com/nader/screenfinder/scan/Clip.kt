@@ -31,7 +31,13 @@ object Clip {
                 f.outputStream().use { i.copyTo(it) }
             }
             env = OrtEnvironment.getEnvironment()
-            session = env!!.createSession(f.absolutePath)
+            // images already run several at a time, so each inference stays single threaded
+            val opts = OrtSession.SessionOptions().apply {
+                setIntraOpNumThreads(1)
+                setInterOpNumThreads(1)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            }
+            session = env!!.createSession(f.absolutePath, opts)
             val json = JSONObject(c.assets.open("clip/concepts.json").bufferedReader().readText())
             val arr = json.getJSONArray("concepts")
             concepts = (0 until arr.length()).map { i ->

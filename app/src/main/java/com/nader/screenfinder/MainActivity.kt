@@ -135,6 +135,8 @@ class MainActivity : ComponentActivity() {
         var cats by remember { mutableStateOf(listOf<CatCount>()) }
         var fast by remember { mutableStateOf(0 to 0) }
         var deep by remember { mutableStateOf(0) }
+        var speed by remember { mutableStateOf("") }
+        val prefs = remember { getSharedPreferences("sf", MODE_PRIVATE) }
         var showRule by remember { mutableStateOf(false) }
         var assign by remember { mutableStateOf<Shot?>(null) }
         var viewer by remember { mutableStateOf<Int?>(null) }
@@ -146,6 +148,7 @@ class MainActivity : ComponentActivity() {
             while (true) {
                 fast = dao.countScanned() to dao.countAll()
                 deep = dao.countDeep()
+                speed = prefs.getString("speed", "") ?: ""
                 cats = dao.cats()
                 tick++
                 delay(3000)
@@ -179,12 +182,16 @@ class MainActivity : ComponentActivity() {
                     shape = RoundedCornerShape(24.dp)
                 )
                 if (fast.second > 0 && (fast.first < fast.second || deep < fast.second)) {
-                    Text(
-                        if (fast.first < fast.second) "סריקה מהירה: ${fast.first} מתוך ${fast.second}"
-                        else "הבנה מעמיקה ברקע: $deep מתוך ${fast.second}",
-                        fontSize = 12.sp, color = Accent,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
+                    Column(Modifier.padding(vertical = 4.dp)) {
+                        Text(
+                            if (fast.first < fast.second) "סריקה מהירה: ${fast.first} מתוך ${fast.second}"
+                            else "הבנה מעמיקה ברקע: $deep מתוך ${fast.second}",
+                            fontSize = 12.sp, color = Accent
+                        )
+                        if (speed.isNotBlank()) {
+                            Text(speed, fontSize = 11.sp, color = Color(0xFF8A94A6))
+                        }
+                    }
                 }
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),

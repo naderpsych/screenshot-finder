@@ -15,6 +15,7 @@ import androidx.work.WorkerParameters
 import com.nader.screenfinder.data.Db
 import com.nader.screenfinder.data.Shot
 import com.nader.screenfinder.data.ShotDao
+import com.nader.screenfinder.data.UserRule
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
@@ -38,11 +39,12 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val done = AtomicInteger(dao.countScanned())
 
         // ---- pass 1: quick sweep over everything, newest first ----
+        val rules = dao.rules()
         while (true) {
             val batch = dao.unscanned(4 * lanes)
             if (batch.isEmpty()) break
-            runParallel(batch) { s -> fastPass(c, dao, s) }
-            note("סריקה מהירה: ${done.addAndGet(batch.size)} מתוך $total")
+            runParallel(batch) { s -> fastPass(c, dao, s, rules) }
+            report(c, "סריקה מהירה: ${done.addAndGet(batch.size)} מתוך $total")
         }
 
         heal(c, dao)
@@ -53,7 +55,7 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             val batch = dao.needDeep(2 * lanes)
             if (batch.isEmpty()) break
             runParallel(batch) { s -> deepPass(c, dao, s) }
-            note("הבנה מעמיקה: ${deep.addAndGet(batch.size)} מתוך $total")
+            report(c, "הבנה מעמיקה: ${deep.addAndGet(batch.size)} מתוך $total")
         }
 
         try {
@@ -82,45 +84,49 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
     }
 
     /** latin OCR only - about 0.1s per screenshot */
-    private suspend fun fastPass(c: Context, dao: ShotDao, s: Shot) {
-        val bmp = Scanner.load(c, s.id, 1200)
+    private suspend fun fastPass(c: Context, dao: ShotDao, s: Shot, rules: List<UserRule>) {
+        val bmp = Meter.time(Meter.decode) { Scanner.load(c, s.id, 1200) }
         if (bmp == null) {
             dao.update(s.copy(scanned = true, deepDone = true))
             return
         }
         val text = try {
-            Ocr.latin(bmp)
+            Meter.time(Meter.latin) { Ocr.latin(bmp) }
         } finally {
             bmp.recycle()
         }
-        val (cat, src) = Categorizer.categorize(s.sourceApp, text, emptyList(), dao.rules())
-        dao.update(
-            s.copy(
-                text = text,
-                norm = Ocr.norm(text),
-                category = s.userCat ?: cat,
-                source = src,
-                scanned = true
+        val (cat, src) = Categorizer.categorize(s.sourceApp, text, emptyList(), rules)
+        Meter.time(Meter.db) {
+            dao.update(
+                s.copy(
+                    text = text,
+                    norm = Ocr.norm(text),
+                    category = s.userCat ?: cat,
+                    source = src,
+                    scanned = true
+                )
             )
-        )
+        }
     }
 
     /** hebrew/arabic OCR when needed + visual fingerprint */
     private suspend fun deepPass(c: Context, dao: ShotDao, s: Shot) {
-        val bmp = Scanner.load(c, s.id, 1200)
+        var text = s.text ?: ""
+        val needHeavy = !s.heavyOcr && text.length < Ocr.LATIN_THRESHOLD
+        // when only the visual model is left there is no reason to decode a big bitmap
+        val bmp = Meter.time(Meter.decode) { Scanner.load(c, s.id, if (needHeavy) 1200 else 480) }
         if (bmp == null) {
             dao.update(s.copy(deepDone = true))
             return
         }
-        var text = s.text ?: ""
         var heavy = s.heavyOcr
         try {
-            if (!heavy && text.length < Ocr.LATIN_THRESHOLD) {
-                val rtl = Ocr.heavy(c, bmp)
+            if (needHeavy) {
+                val rtl = Meter.time(Meter.heavy) { Ocr.heavy(c, bmp) }
                 if (rtl.isNotBlank()) text = (text + "\n" + rtl).trim()
                 heavy = true
             }
-            val emb = Clip.embed(c, bmp)
+            val emb = Meter.time(Meter.clip) { Clip.embed(c, bmp) }
             val visual = emb?.let { Clip.tagsFrom(it) }
             val mlLabels = if (text.length < 80) Ocr.labels(bmp) else emptyList()
 
@@ -241,6 +247,16 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             setForeground(info(msg))
         } catch (e: Throwable) {
         }
+    }
+
+    /** progress + where the time actually goes, visible in the app and in the notification */
+    private suspend fun report(c: Context, msg: String) {
+        try {
+            c.getSharedPreferences("sf", Context.MODE_PRIVATE).edit()
+                .putString("progress", msg).putString("speed", Meter.summary()).apply()
+        } catch (e: Throwable) {
+        }
+        note("$msg · ${Meter.summary()}")
     }
 
     private fun info(msg: String): ForegroundInfo {
