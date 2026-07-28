@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- screen frame -->
+    <path
+        android:pathData="M34,30 L74,30 A5,5 0 0 1 79,35 L79,73 A5,5 0 0 1 74,78 L34,78 A5,5 0 0 1 29,73 L29,35 A5,5 0 0 1 34,30 Z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.6"
+        android:strokeLineJoin="round" />
+
+    <!-- magnifier -->
+    <path
+        android:pathData="M43,38.6 a5.4,5.4 0 1 1 -0.01,0"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.2" />
+    <path
+        android:pathData="M47.2,48.2 L51.6,52.6"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+
+    <!-- folders -->
+    <path
+        android:pathData="M57,51.5 L57,40.5 L62.5,40.5 L64.5,38.5 L72,38.5 L72,51.5 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M36,70 L36,59 L41.5,59 L43.5,57 L51,57 L51,70 Z"
+        android:fillColor="#FFFFFFFF" />
+    <path
+        android:pathData="M57,70 L57,59 L62.5,59 L64.5,57 L72,57 L72,70 Z"
+        android:fillColor="#FFFFFFFF" />
+</vector>

@@ -314,7 +314,7 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val n: Notification = Notification.Builder(applicationContext, "scan")
             .setContentTitle("Screenote")
             .setContentText(msg)
-            .setSmallIcon(android.R.drawable.ic_menu_search)
+            .setSmallIcon(com.nader.screenfinder.R.drawable.ic_logo_fg)
             .setOngoing(true)
             .build()
         return if (Build.VERSION.SDK_INT >= 34) {
