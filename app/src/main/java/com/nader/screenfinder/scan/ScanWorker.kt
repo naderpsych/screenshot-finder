@@ -5,6 +5,7 @@ import android.app.Notification
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.os.Build
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -89,20 +90,41 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             return
         }
         try {
-            var text = Meter.time(Meter.latin) { Ocr.latin(bmp) }
+            val (latinText, blocks) = Meter.time(Meter.latin) { Ocr.latinBlocks(bmp) }
+            var text = latinText
             if (text.length < Ocr.LATIN_THRESHOLD) {
                 val rtl = Meter.time(Meter.heavy) { Ocr.heavy(c, bmp) }
                 if (rtl.isNotBlank()) text = (text + "\n" + rtl).trim()
             }
-            val emb = Meter.time(Meter.clip) { Clip.embed(c, bmp) }
-            val visual = emb?.let { Clip.tagsFrom(it) }
-            val mlLabels = if (text.length < 80) Ocr.labels(bmp) else emptyList()
 
+            // what is this screenshot actually about
+            val focus = Focus.analyze(bmp.width, bmp.height, blocks)
+            val subject = if (focus.focusText.length > 25) focus.focusText else text
+
+            // the visual model looks at the picture, not at the surrounding interface
+            val view = focus.crop?.let { r ->
+                try {
+                    Bitmap.createBitmap(bmp, r.left, r.top, r.width().coerceAtLeast(8), r.height().coerceAtLeast(8))
+                } catch (e: Throwable) {
+                    null
+                }
+            } ?: bmp
+            val emb = Meter.time(Meter.clip) { Clip.embed(c, view) }
+            val mlLabels = if (text.length < 80) Ocr.labels(view) else emptyList()
+            if (view !== bmp) view.recycle()
+
+            val visual = emb?.let { Clip.tagsFrom(it) }
             var labels = (mlLabels.joinToString(" ") + " " + (visual?.words ?: "")).trim()
             if (text.length < 80 && emb != null) {
                 labels = (labels + " " + borrowContext(dao, s, emb)).trim()
             }
-            var (cat, src) = Categorizer.categorize(s.sourceApp, text, mlLabels, rules)
+            var (cat, src) = Categorizer.categorize(s.sourceApp, subject, mlLabels, rules)
+            if (cat == "לא מסווג") {
+                // the periphery may still identify the source even when it is not the subject
+                val (c2, src2) = Categorizer.categorize(s.sourceApp, text, mlLabels, rules)
+                cat = c2
+                if (src == null) src = src2
+            }
             if (cat == "לא מסווג" && visual?.cat != null) cat = visual.cat
 
             Meter.time(Meter.db) {

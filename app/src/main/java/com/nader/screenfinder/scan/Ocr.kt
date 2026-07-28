@@ -55,11 +55,25 @@ object Ocr {
         }
     }
 
+    data class Block(val text: String, val top: Int, val bottom: Int)
+
     /** fast pass: latin script only, ~0.1s */
     suspend fun latin(bmp: Bitmap): String = try {
         recognizer.process(InputImage.fromBitmap(bmp, 0)).await().text.trim()
     } catch (e: Exception) {
         ""
+    }
+
+    /** same pass, but keeping where each piece of text sits on the screen */
+    suspend fun latinBlocks(bmp: Bitmap): Pair<String, List<Block>> = try {
+        val res = recognizer.process(InputImage.fromBitmap(bmp, 0)).await()
+        val blocks = res.textBlocks.mapNotNull { b ->
+            val r = b.boundingBox ?: return@mapNotNull null
+            Block(b.text.trim(), r.top, r.bottom)
+        }
+        res.text.trim() to blocks
+    } catch (e: Exception) {
+        "" to emptyList()
     }
 
     /** deep pass: hebrew + arabic, ~0.8s */
