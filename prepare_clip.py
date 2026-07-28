@@ -176,6 +176,33 @@ cos = float(np.dot(out, ref))
 print("fp16-vs-torch cosine:", cos)
 assert cos > 0.98, f"fp16 model diverged: {cos}"
 
+# ---- open vocabulary: precompute a fingerprint for every common english word ----
+from wordfreq import top_n_list
+
+phrases = [en for en, _, _ in CONCEPTS]
+common = [w for w in top_n_list("en", 45000) if w.isalpha() and len(w) >= 3][:30000]
+vocab, seen = [], set()
+for w in phrases + common:
+    if w not in seen:
+        seen.add(w)
+        vocab.append(w)
+
+chunks = []
+for i in range(0, len(vocab), 256):
+    batch = ["a photo of " + w for w in vocab[i:i + 256]]
+    bin_ = proc(text=batch, return_tensors="pt", padding=True)
+    with torch.no_grad():
+        bv = tm(**bin_).text_embeds
+    bv = bv / bv.norm(dim=-1, keepdim=True)
+    chunks.append((bv.numpy() * 127).round().clip(-127, 127).astype("int8"))
+    if i % 5120 == 0:
+        print("embedded", i, "/", len(vocab))
+
+words = np.concatenate(chunks)
+words.tofile(f"{OUT}/words.bin")
+open(f"{OUT}/words.txt", "w", encoding="utf-8").write("\n".join(vocab))
+print("vocabulary:", words.shape, os.path.getsize(f"{OUT}/words.bin") // 1024 // 1024, "MB")
+
 json.dump(
     {"concepts": [
         {"en": e, "he": h, "cat": c, "v": [round(float(x), 5) for x in tfeat[i].tolist()]}

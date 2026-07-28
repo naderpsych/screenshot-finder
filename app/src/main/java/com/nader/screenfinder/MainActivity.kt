@@ -63,8 +63,29 @@ import com.nader.screenfinder.scan.Categorizer
 import com.nader.screenfinder.scan.Ocr
 import com.nader.screenfinder.scan.ScanWorker
 import com.nader.screenfinder.scan.Scanner
+import com.nader.screenfinder.data.IdEmb
+import com.nader.screenfinder.data.ShotDao
+import com.nader.screenfinder.scan.TextVec
+import com.nader.screenfinder.scan.Vec
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/** keeps the fingerprints in memory so every search does not reload them */
+private object EmbCache {
+    private var data: List<IdEmb> = emptyList()
+    private var loadedAt = 0L
+
+    suspend fun get(dao: ShotDao): List<IdEmb> {
+        val now = System.currentTimeMillis()
+        if (data.isEmpty() || now - loadedAt > 60_000) {
+            data = dao.allEmb()
+            loadedAt = now
+        }
+        return data
+    }
+}
 
 private val Bg = Color(0xFF0E1116)
 private val Card = Color(0xFF1A1F27)
@@ -155,15 +176,35 @@ class MainActivity : ComponentActivity() {
             }
         }
         LaunchedEffect(query, cat, tick) {
-            shots = when {
-                query.isNotBlank() -> try {
-                    dao.search(buildFts(query))
-                } catch (e: Exception) {
-                    emptyList()
-                }
-                cat != null -> dao.byCategory(cat!!)
-                else -> dao.recent()
+            if (query.isBlank()) {
+                shots = if (cat != null) dao.byCategory(cat!!) else dao.recent()
+                return@LaunchedEffect
             }
+            delay(300)   // wait until typing stops
+            val textHits = try {
+                dao.search(buildFts(query))
+            } catch (e: Exception) {
+                emptyList()
+            }
+            val qv = withContext(Dispatchers.Default) { TextVec.embed(this@MainActivity, query) }
+            if (qv == null) {
+                shots = textHits
+                return@LaunchedEffect
+            }
+            val packed = Vec.pack(qv)
+            val all = EmbCache.get(dao)
+            val sims = withContext(Dispatchers.Default) {
+                all.mapNotNull { e -> e.emb?.let { b -> e.id to Vec.cos(packed, b) } }
+                    .filter { it.second > 0.20f }
+                    .sortedByDescending { it.second }
+                    .take(200)
+            }
+            val score = sims.toMap()
+            val textIds = textHits.map { it.id }.toSet()
+            val visual = if (sims.isEmpty()) emptyList()
+            else dao.byIds(sims.map { it.first }).filter { it.id !in textIds }
+            shots = (textHits + visual)
+                .sortedByDescending { (score[it.id] ?: 0f) + if (it.id in textIds) 0.15f else 0f }
         }
 
         Box(Modifier.fillMaxSize().background(Bg)) {
