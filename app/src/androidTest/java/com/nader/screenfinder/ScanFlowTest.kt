@@ -11,8 +11,10 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import com.nader.screenfinder.data.Db
 import com.nader.screenfinder.scan.Categorizer
+import com.nader.screenfinder.scan.Clip
 import com.nader.screenfinder.scan.Ocr
 import com.nader.screenfinder.scan.Scanner
+import com.nader.screenfinder.scan.Vec
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -59,19 +61,22 @@ class ScanFlowTest {
         val shot = (dao.unscanned(2000) + dao.allScanned())
             .first { it.name == "Screenshot_20240101_120000_Chrome.jpg" }
 
-        // OCR + categorize
+        // OCR + visual fingerprint + categorize
         val loaded = Scanner.load(ctx, shot.id, 1600)!!
-        val res = Ocr.process(ctx, loaded)
+        val text = Ocr.latin(loaded)
+        val emb = Clip.embed(ctx, loaded)
         loaded.recycle()
-        assertTrue("OCR should read 'recipe', got: ${res.text}", res.text.lowercase().contains("recipe"))
+        assertTrue("OCR should read 'recipe', got: $text", text.lowercase().contains("recipe"))
+        assertTrue("CLIP should produce a fingerprint", emb != null && emb.size > 100)
 
-        val (cat, _) = Categorizer.categorize(shot.sourceApp, res.text, res.labels, emptyList())
+        val (cat, _) = Categorizer.categorize(shot.sourceApp, text, emptyList(), emptyList())
         assertTrue("category was $cat", cat == "מתכונים")
 
         dao.update(
             shot.copy(
-                text = res.text, norm = Ocr.norm(res.text),
-                labels = res.labels.joinToString(" "), category = cat, scanned = true
+                text = text, norm = Ocr.norm(text),
+                category = cat, scanned = true, deepDone = true,
+                emb = emb?.let { Vec.pack(it) }
             )
         )
 

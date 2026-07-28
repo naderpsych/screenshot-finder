@@ -13,76 +13,187 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.nader.screenfinder.data.Db
+import com.nader.screenfinder.data.Shot
+import com.nader.screenfinder.data.ShotDao
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.util.concurrent.atomic.AtomicInteger
 
 class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
+
+    /** how many screenshots are processed at the same time */
+    private val lanes = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 4)
+    private val gate = Semaphore(lanes)
 
     override suspend fun doWork(): Result {
         val c = applicationContext
         if (c.checkSelfPermission(perm) != PackageManager.PERMISSION_GRANTED) return Result.success()
         val dao = Db.get(c).dao()
+        note("בודק שינויים...")
+        Scanner.diff(c, dao)
+
+        val total = dao.countAll()
+        val done = AtomicInteger(dao.countScanned())
+
+        // ---- pass 1: quick sweep over everything, newest first ----
+        while (true) {
+            val batch = dao.unscanned(4 * lanes)
+            if (batch.isEmpty()) break
+            runParallel(batch) { s -> fastPass(c, dao, s) }
+            note("סריקה מהירה: ${done.addAndGet(batch.size)} מתוך $total")
+        }
+
+        heal(c, dao)
+
+        // ---- pass 2: deep understanding, in the background ----
+        val deep = AtomicInteger(dao.countDeep())
+        while (true) {
+            val batch = dao.needDeep(2 * lanes)
+            if (batch.isEmpty()) break
+            runParallel(batch) { s -> deepPass(c, dao, s) }
+            note("הבנה מעמיקה: ${deep.addAndGet(batch.size)} מתוך $total")
+        }
+
         try {
-            setForeground(info("בודק שינויים..."))
+            Learner.run(dao)
         } catch (e: Exception) {
         }
-        Scanner.diff(c, dao)
-        val total = dao.countAll()
-        var done = dao.countScanned()
+        autoOrganize(dao)
+        brainPass(c, dao)
+        return Result.success()
+    }
+
+    private suspend fun runParallel(batch: List<Shot>, block: suspend (Shot) -> Unit) = coroutineScope {
+        batch.map { s ->
+            async {
+                try {
+                    gate.withPermit { block(s) }
+                } catch (e: Throwable) {
+                }
+            }
+        }.forEach { it.await() }
+    }
+
+    /** latin OCR only - about 0.1s per screenshot */
+    private suspend fun fastPass(c: Context, dao: ShotDao, s: Shot) {
+        val bmp = Scanner.load(c, s.id, 1200)
+        if (bmp == null) {
+            dao.update(s.copy(scanned = true, deepDone = true))
+            return
+        }
+        val text = try {
+            Ocr.latin(bmp)
+        } finally {
+            bmp.recycle()
+        }
+        val (cat, src) = Categorizer.categorize(s.sourceApp, text, emptyList(), dao.rules())
+        dao.update(
+            s.copy(
+                text = text,
+                norm = Ocr.norm(text),
+                category = s.userCat ?: cat,
+                source = src,
+                scanned = true
+            )
+        )
+    }
+
+    /** hebrew/arabic OCR when needed + visual fingerprint */
+    private suspend fun deepPass(c: Context, dao: ShotDao, s: Shot) {
+        val bmp = Scanner.load(c, s.id, 1200)
+        if (bmp == null) {
+            dao.update(s.copy(deepDone = true))
+            return
+        }
+        var text = s.text ?: ""
+        var heavy = s.heavyOcr
+        try {
+            if (!heavy && text.length < Ocr.LATIN_THRESHOLD) {
+                val rtl = Ocr.heavy(c, bmp)
+                if (rtl.isNotBlank()) text = (text + "\n" + rtl).trim()
+                heavy = true
+            }
+            val emb = Clip.embed(c, bmp)
+            val visual = emb?.let { Clip.tagsFrom(it) }
+            val mlLabels = if (text.length < 80) Ocr.labels(bmp) else emptyList()
+
+            var labels = (mlLabels.joinToString(" ") + " " + (visual?.words ?: "")).trim()
+            // a screenshot with almost no text borrows context from shots taken beside it
+            if (text.length < 80 && emb != null) {
+                labels = (labels + " " + borrowContext(dao, s, emb)).trim()
+            }
+            var (cat, src) = Categorizer.categorize(s.sourceApp, text, mlLabels, dao.rules())
+            if (cat == "לא מסווג") Brain.classify(c, text)?.let { cat = it }
+            if (cat == "לא מסווג" && visual?.cat != null) cat = visual.cat
+
+            dao.update(
+                s.copy(
+                    text = text,
+                    norm = Ocr.norm(text),
+                    labels = labels,
+                    category = s.userCat ?: cat,
+                    source = src ?: s.source,
+                    heavyOcr = heavy,
+                    emb = emb?.let { Vec.pack(it) },
+                    clipDone = emb != null,
+                    deepDone = true
+                )
+            )
+        } finally {
+            bmp.recycle()
+        }
+    }
+
+    /** shots taken within a couple of minutes AND visually alike are the same subject */
+    private suspend fun borrowContext(dao: ShotDao, s: Shot, emb: FloatArray): String {
+        return try {
+            val packed = Vec.pack(emb)
+            dao.neighbors(s.id, s.date - 120, s.date + 120)
+                .filter { n -> n.emb != null && Vec.cos(packed, n.emb!!) > 0.72f }
+                .joinToString(" ") { (it.text ?: "").take(120) }
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    private suspend fun brainPass(c: Context, dao: ShotDao) {
+        if (!Brain.available(c)) return
+        var n = 0
         while (true) {
-            val batch = dao.unscanned(10)
+            val batch = dao.needBrain(10)
             if (batch.isEmpty()) break
             for (s in batch) {
                 try {
-                    val bmp = Scanner.load(c, s.id, 1600)
-                    if (bmp == null) {
-                        dao.update(s.copy(scanned = true))
-                    } else {
-                        val r = Ocr.process(c, bmp)
-                        val clip = Clip.tags(c, bmp)
-                        bmp.recycle()
-                        var (cat, src) = Categorizer.categorize(s.sourceApp, r.text, r.labels, dao.rules())
-                        if (cat == "לא מסווג") Brain.classify(c, r.text)?.let { cat = it }
-                        if (cat == "לא מסווג" && clip?.cat != null) cat = clip.cat
-                        val labels = (r.labels.joinToString(" ") + " " + (clip?.words ?: "")).trim()
-                        dao.update(
-                            s.copy(
-                                text = r.text,
-                                norm = Ocr.norm(r.text),
-                                labels = labels,
-                                category = cat,
-                                source = src,
-                                scanned = true,
-                                clipDone = clip != null
-                            )
+                    val cat = Brain.classify(c, s.text ?: "")
+                    dao.update(
+                        s.copy(
+                            category = s.userCat ?: cat ?: s.category,
+                            labels = ((s.labels ?: "") + " 🧠").trim()
                         )
-                    }
+                    )
                 } catch (e: Exception) {
                     try {
-                        dao.update(s.copy(scanned = true))
+                        dao.update(s.copy(labels = ((s.labels ?: "") + " 🧠").trim()))
                     } catch (e2: Exception) {
                     }
                 }
-                done++
-                if (done % 10 == 0) try {
-                    setForeground(info("נסרקו $done מתוך $total"))
-                } catch (e: Exception) {
-                }
+                n++
+                if (n % 10 == 0) note("סיווג חכם: $n")
             }
         }
-        // expanded CLIP concepts -> re-tag everything once
-        val prefs = c.getSharedPreferences("sf", Context.MODE_PRIVATE)
-        if (prefs.getInt("conceptsVer", 1) < 2) {
-            try {
-                dao.resetClip()
-                prefs.edit().putInt("conceptsVer", 2).apply()
-            } catch (e: Exception) {
-            }
-        }
-        // heal user categories polluted by old substring matching (e.g. פצי inside פציעה)
+        autoOrganize(dao)
+    }
+
+    /** undo damage done by older buggy rules */
+    private suspend fun heal(c: Context, dao: ShotDao) {
         try {
             val rules = dao.rules()
             for (r in rules) {
                 val kws = r.keywords.split(",").map { Ocr.norm(it.trim()) }.filter { it.isNotBlank() }
                 for (s in dao.allInCategory(r.name)) {
+                    if (s.userCat != null) continue
                     if (kws.none { Categorizer.wordMatch(s.norm ?: "", it) }) {
                         val (c2, src2) = Categorizer.categorize(
                             s.sourceApp, s.text ?: "", (s.labels ?: "").split(" "), rules
@@ -91,95 +202,18 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
                     }
                 }
             }
-        } catch (e: Exception) {
-        }
-        // re-check categories that had buggy rules in earlier versions
-        try {
-            val rules = dao.rules()
             for (s in dao.allInCategory("קבלות וקניות")) {
+                if (s.userCat != null) continue
                 val (c2, src2) = Categorizer.categorize(
-                    s.sourceApp, s.text ?: "", (s.labels ?: "").split(" "), rules
+                    s.sourceApp, s.text ?: "", (s.labels ?: "").split(" "), dao.rules()
                 )
                 if (c2 != s.category) dao.update(s.copy(category = c2, source = src2))
             }
         } catch (e: Exception) {
         }
-        autoOrganize(dao)
-        // backfill CLIP tags for shots scanned by older versions
-        var clipDone = 0
-        while (true) {
-            val batch = dao.needClip(10)
-            if (batch.isEmpty()) break
-            for (s in batch) {
-                try {
-                    val bmp = Scanner.load(c, s.id, 512)
-                    if (bmp == null) {
-                        dao.update(s.copy(clipDone = true))
-                    } else {
-                        val clip = Clip.tags(c, bmp)
-                        bmp.recycle()
-                        if (clip == null) {
-                            dao.update(s.copy(clipDone = true))
-                        } else {
-                            var cat = s.category
-                            if ((cat == null || cat == "לא מסווג") && clip.cat != null) cat = clip.cat
-                            dao.update(
-                                s.copy(
-                                    labels = ((s.labels ?: "") + " " + clip.words).trim(),
-                                    category = cat,
-                                    clipDone = true
-                                )
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    try {
-                        dao.update(s.copy(clipDone = true))
-                    } catch (e2: Exception) {
-                    }
-                }
-                clipDone++
-                if (clipDone % 20 == 0) try {
-                    setForeground(info("זיהוי תמונות: $clipDone"))
-                } catch (e: Exception) {
-                }
-            }
-        }
-        // brain pass: let the on-device LLM read texts the rules could not classify
-        if (Brain.available(c)) {
-            var brained = 0
-            while (true) {
-                val batch = dao.needBrain(10)
-                if (batch.isEmpty()) break
-                for (s in batch) {
-                    try {
-                        val cat = Brain.classify(c, s.text ?: "")
-                        dao.update(
-                            s.copy(
-                                category = cat ?: s.category,
-                                labels = ((s.labels ?: "") + " 🧠").trim()
-                            )
-                        )
-                    } catch (e: Exception) {
-                        try {
-                            dao.update(s.copy(labels = ((s.labels ?: "") + " 🧠").trim()))
-                        } catch (e2: Exception) {
-                        }
-                    }
-                    brained++
-                    if (brained % 10 == 0) try {
-                        setForeground(info("סיווג חכם: $brained"))
-                    } catch (e: Exception) {
-                    }
-                }
-            }
-            autoOrganize(dao)
-        }
-        return Result.success()
     }
 
-    // self-organizing categories: promote recurring sources and visual tags
-    private suspend fun autoOrganize(dao: com.nader.screenfinder.data.ShotDao) {
+    private suspend fun autoOrganize(dao: ShotDao) {
         try {
             for (src in dao.bigSources(20)) {
                 dao.refineArticles(src)
@@ -194,6 +228,13 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             }
             counts.filterValues { it >= 15 }.keys.forEach { dao.adoptTag(it) }
         } catch (e: Exception) {
+        }
+    }
+
+    private suspend fun note(msg: String) {
+        try {
+            setForeground(info(msg))
+        } catch (e: Throwable) {
         }
     }
 

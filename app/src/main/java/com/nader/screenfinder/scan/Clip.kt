@@ -9,9 +9,8 @@ import org.json.JSONObject
 import java.io.File
 import java.nio.FloatBuffer
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
-/** On-device zero-shot image tagging with CLIP. Nothing leaves the phone. */
+/** On-device visual understanding (CLIP). Nothing leaves the phone. */
 object Clip {
     private class Concept(val en: String, val he: String, val cat: String?, val v: FloatArray)
 
@@ -51,7 +50,8 @@ object Clip {
         }
     }
 
-    fun tags(c: Context, bmp: Bitmap): Tags? {
+    /** full visual fingerprint of the image, normalized. ORT sessions are thread safe. */
+    fun embed(c: Context, bmp: Bitmap): FloatArray? {
         if (!init(c)) return null
         return try {
             val input = preprocess(bmp)
@@ -59,28 +59,32 @@ object Clip {
             OnnxTensor.createTensor(env!!, FloatBuffer.wrap(input), longArrayOf(1, 3, 224, 224)).use { t ->
                 ses.run(mapOf(ses.inputNames.first() to t)).use { out ->
                     @Suppress("UNCHECKED_CAST")
-                    val emb = (out[0].value as Array<FloatArray>)[0]
-                    var n = 0f
-                    for (x in emb) n += x * x
-                    n = sqrt(n)
-                    val scored = concepts.map { con ->
-                        var d = 0f
-                        for (i in emb.indices) d += (emb[i] / n) * con.v[i]
-                        con to d
-                    }.sortedByDescending { it.second }
-                    val top = scored.filter { it.second > 0.22f }.take(3)
-                        .ifEmpty { if (scored.first().second > 0.18f) listOf(scored.first()) else emptyList() }
-                    if (top.isEmpty()) Tags("", null)
-                    else Tags(
-                        top.joinToString(" ") { "${it.first.he} ${it.first.en}" },
-                        top.first().first.cat
-                    )
+                    Vec.normalize((out[0].value as Array<FloatArray>)[0])
                 }
             }
         } catch (e: Throwable) {
             null
         }
     }
+
+    /** human readable tags derived from a fingerprint */
+    fun tagsFrom(emb: FloatArray): Tags {
+        if (concepts.isEmpty()) return Tags("", null)
+        val scored = concepts.map { con ->
+            var d = 0f
+            for (i in emb.indices) d += emb[i] * con.v[i]
+            con to d
+        }.sortedByDescending { it.second }
+        val top = scored.filter { it.second > 0.22f }.take(3)
+            .ifEmpty { if (scored.first().second > 0.18f) listOf(scored.first()) else emptyList() }
+        if (top.isEmpty()) return Tags("", null)
+        return Tags(
+            top.joinToString(" ") { "${it.first.he} ${it.first.en}" },
+            top.first().first.cat
+        )
+    }
+
+    fun tags(c: Context, bmp: Bitmap): Tags? = embed(c, bmp)?.let { tagsFrom(it) }
 
     private fun preprocess(src: Bitmap): FloatArray {
         val scale = 224f / minOf(src.width, src.height)

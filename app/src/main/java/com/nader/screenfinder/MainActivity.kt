@@ -16,10 +16,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -73,11 +76,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme(
-                colorScheme = darkColorScheme(
-                    primary = Accent,
-                    background = Bg,
-                    surface = Card
-                )
+                colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Card)
             ) { Main() }
         }
     }
@@ -134,8 +133,10 @@ class MainActivity : ComponentActivity() {
         var cat by remember { mutableStateOf<String?>(null) }
         var shots by remember { mutableStateOf(listOf<Shot>()) }
         var cats by remember { mutableStateOf(listOf<CatCount>()) }
-        var prog by remember { mutableStateOf(0 to 0) }
+        var fast by remember { mutableStateOf(0 to 0) }
+        var deep by remember { mutableStateOf(0) }
         var showRule by remember { mutableStateOf(false) }
+        var assign by remember { mutableStateOf<Shot?>(null) }
         var viewer by remember { mutableStateOf<Int?>(null) }
         var tick by remember { mutableStateOf(0) }
         var brainReady by remember { mutableStateOf(Brain.available(this)) }
@@ -143,7 +144,8 @@ class MainActivity : ComponentActivity() {
 
         LaunchedEffect(Unit) {
             while (true) {
-                prog = dao.countScanned() to dao.countAll()
+                fast = dao.countScanned() to dao.countAll()
+                deep = dao.countDeep()
                 cats = dao.cats()
                 tick++
                 delay(3000)
@@ -165,9 +167,7 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
                 Text(
                     "חיפוש סקרינשוטים",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
+                    fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
                     modifier = Modifier.padding(top = 14.dp, bottom = 8.dp)
                 )
                 OutlinedTextField(
@@ -178,9 +178,10 @@ class MainActivity : ComponentActivity() {
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp)
                 )
-                if (prog.second > 0 && prog.first < prog.second) {
+                if (fast.second > 0 && (fast.first < fast.second || deep < fast.second)) {
                     Text(
-                        "נסרקו ${prog.first} מתוך ${prog.second}",
+                        if (fast.first < fast.second) "סריקה מהירה: ${fast.first} מתוך ${fast.second}"
+                        else "הבנה מעמיקה ברקע: $deep מתוך ${fast.second}",
                         fontSize = 12.sp, color = Accent,
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
@@ -243,7 +244,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // in-app fullscreen viewer with swipe
             val vi = viewer
             if (vi != null && shots.isNotEmpty()) {
                 BackHandler { viewer = null }
@@ -258,24 +258,70 @@ class MainActivity : ComponentActivity() {
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier.weight(1f).fillMaxWidth()
                             )
-                            Text(
-                                listOfNotNull(s.category, s.source).joinToString(" · ")
-                                    .ifBlank { " " },
-                                color = Color.White, fontSize = 13.sp,
-                                modifier = Modifier.align(Alignment.CenterHorizontally).padding(8.dp)
-                            )
+                            Row(
+                                Modifier.fillMaxWidth().padding(10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    listOfNotNull(s.category, s.source).joinToString(" · ").ifBlank { "לא מסווג" },
+                                    color = Color.White, fontSize = 13.sp
+                                )
+                                TextButton(onClick = { assign = s }) { Text("שנה קטגוריה") }
+                            }
                         }
                     }
                     Text(
                         "✕",
                         color = Color.White, fontSize = 26.sp,
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(16.dp)
+                        modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)
                             .clickable { viewer = null }
                     )
                 }
             }
+        }
+
+        // assign a shot to a category - and teach the app from it
+        val target = assign
+        if (target != null) {
+            var custom by remember { mutableStateOf("") }
+            fun apply(name: String) {
+                if (name.isBlank()) return
+                scope.launch {
+                    dao.setUserCat(target.id, name.trim())
+                    Toast.makeText(
+                        this@MainActivity,
+                        "נשמר. תמונות דומות יסווגו כך גם הן",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    ScanWorker.enqueue(this@MainActivity)
+                    tick++
+                }
+                assign = null
+            }
+            AlertDialog(
+                onDismissRequest = { assign = null },
+                title = { Text("לאיזו קטגוריה זה שייך?") },
+                text = {
+                    Column {
+                        LazyColumn(Modifier.heightIn(max = 260.dp)) {
+                            rowItems(cats.mapNotNull { it.category }.filter { it != "לא מסווג" }) { name ->
+                                Text(
+                                    name, color = Color.White, fontSize = 16.sp,
+                                    modifier = Modifier.fillMaxWidth().clickable { apply(name) }
+                                        .padding(vertical = 10.dp)
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            custom, { custom = it },
+                            placeholder = { Text("או קטגוריה חדשה") }, singleLine = true
+                        )
+                    }
+                },
+                confirmButton = { TextButton(onClick = { apply(custom) }) { Text("שמור") } },
+                dismissButton = { TextButton(onClick = { assign = null }) { Text("ביטול") } }
+            )
         }
 
         if (showRule) {
@@ -315,9 +361,7 @@ class MainActivity : ComponentActivity() {
                         showRule = false
                     }) { Text("שמור") }
                 },
-                dismissButton = {
-                    TextButton(onClick = { showRule = false }) { Text("ביטול") }
-                }
+                dismissButton = { TextButton(onClick = { showRule = false }) { Text("ביטול") } }
             )
         }
     }
