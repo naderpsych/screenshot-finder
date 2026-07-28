@@ -143,38 +143,98 @@ with torch.no_grad():
     ref = vm(pix).image_embeds
 ref = (ref / ref.norm(dim=-1, keepdim=True)).numpy()[0]
 
-# export vision encoder with projection to onnx, fp16 weights with casts inside the graph
+# a few varied probe images so quality is judged on more than one picture
+def probe(kind):
+    a = np.zeros((224, 224, 3), dtype=np.uint8)
+    if kind == "gradient":
+        for y in range(224):
+            for x in range(224):
+                a[y, x] = (x, y, (x + y) // 2)
+    elif kind == "checker":
+        for y in range(224):
+            for x in range(224):
+                a[y, x] = (255, 255, 255) if ((x // 16) + (y // 16)) % 2 else (20, 30, 60)
+    elif kind == "blob":
+        yy, xx = np.mgrid[0:224, 0:224]
+        d = np.sqrt((xx - 112) ** 2 + (yy - 112) ** 2)
+        a[..., 0] = np.clip(255 - d * 2, 0, 255)
+        a[..., 1] = np.clip(d * 1.5, 0, 255)
+        a[..., 2] = 128
+    else:
+        rng = np.random.RandomState(7)
+        a = rng.randint(0, 255, (224, 224, 3), dtype=np.uint8)
+    return proc(images=Image.fromarray(a), return_tensors="pt")["pixel_values"]
+
+probes = [probe(k) for k in ("gradient", "checker", "blob", "noise")]
+refs = []
+for p in probes:
+    with torch.no_grad():
+        v = vm(p).image_embeds
+    refs.append((v / v.norm(dim=-1, keepdim=True)).numpy()[0])
+
+
 class VisionWrap(torch.nn.Module):
     def __init__(self, m):
         super().__init__()
         self.m = m
 
     def forward(self, pixel_values):
-        return self.m(pixel_values.half()).image_embeds.float()
+        return self.m(pixel_values).image_embeds
 
-wrap = VisionWrap(vm.half())
+
+wrap = VisionWrap(vm)
 wrap.eval()
 try:
     torch.onnx.export(
-        wrap, (pix,), f"{OUT}/vision.onnx",
+        wrap, (pix,), "vision_f32.onnx",
         input_names=["pixel_values"], output_names=["image_embeds"],
         opset_version=14, dynamo=False,
     )
 except TypeError:
     torch.onnx.export(
-        wrap, (pix,), f"{OUT}/vision.onnx",
+        wrap, (pix,), "vision_f32.onnx",
         input_names=["pixel_values"], output_names=["image_embeds"],
         opset_version=14,
     )
 
-# verify fp16 model matches torch
+import onnx
 import onnxruntime as ort
-s = ort.InferenceSession(f"{OUT}/vision.onnx")
-out = s.run(None, {s.get_inputs()[0].name: pix.numpy()})[0][0]
-out = out / np.linalg.norm(out)
-cos = float(np.dot(out, ref))
-print("fp16-vs-torch cosine:", cos)
-assert cos > 0.98, f"fp16 model diverged: {cos}"
+
+
+def quality(path):
+    s = ort.InferenceSession(path)
+    name = s.get_inputs()[0].name
+    scores = []
+    for p, r in zip(probes, refs):
+        o = s.run(None, {name: p.numpy()})[0][0]
+        o = o / np.linalg.norm(o)
+        scores.append(float(np.dot(o, r)))
+    return min(scores), sum(scores) / len(scores)
+
+
+# try the small one first: int8 per channel is four times lighter than fp16
+from onnxruntime.quantization import quantize_dynamic, QuantType
+
+quantize_dynamic(
+    "vision_f32.onnx", "vision_int8.onnx",
+    weight_type=QuantType.QInt8, per_channel=True, reduce_range=True,
+)
+lo8, avg8 = quality("vision_int8.onnx")
+print(f"int8 quality: worst {lo8:.4f} average {avg8:.4f}")
+
+if lo8 > 0.97:
+    os.replace("vision_int8.onnx", f"{OUT}/vision.onnx")
+    print("using int8 vision model")
+else:
+    from onnxconverter_common import float16
+    m16 = float16.convert_float_to_float16(onnx.load("vision_f32.onnx"), keep_io_types=True)
+    onnx.save(m16, f"{OUT}/vision.onnx")
+    lo16, avg16 = quality(f"{OUT}/vision.onnx")
+    print(f"fp16 quality: worst {lo16:.4f} average {avg16:.4f}")
+    assert lo16 > 0.97, f"fp16 model diverged: {lo16}"
+    print("using fp16 vision model")
+
+print("vision model:", os.path.getsize(f"{OUT}/vision.onnx") // 1024 // 1024, "MB")
 
 # ---- open vocabulary: precompute a fingerprint for every common english word ----
 from wordfreq import top_n_list

@@ -15,6 +15,9 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // modern phones are 64 bit; dropping the 32 bit copies of the native engines
+        // cuts about a quarter of the download (x86_64 stays for the CI emulator)
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     signingConfigs {
         create("rel") {
