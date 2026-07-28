@@ -197,9 +197,9 @@ class MainActivity : ComponentActivity() {
                         when {
                             fast.second == 0 -> "גרסה ${BuildConfig.VERSION_NAME} · מחפש סקרינשוטים..."
                             fast.first < fast.second ->
-                                "גרסה ${BuildConfig.VERSION_NAME} · שלב 1 מהיר: ${fast.first} מתוך ${fast.second}"
+                                "גרסה ${BuildConfig.VERSION_NAME} · נסרקו ${fast.first} מתוך ${fast.second}"
                             deep < fast.second ->
-                                "גרסה ${BuildConfig.VERSION_NAME} · שלב 2 מעמיק: $deep מתוך ${fast.second}"
+                                "גרסה ${BuildConfig.VERSION_NAME} · משלים הבנה: $deep מתוך ${fast.second}"
                             else -> "גרסה ${BuildConfig.VERSION_NAME} · הכל נסרק (${fast.second})"
                         },
                         fontSize = 13.sp, color = Accent, fontWeight = FontWeight.Bold
@@ -249,7 +249,22 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     if (brainProgress != null) {
-                        item { AssistChip(onClick = {}, label = { Text("מוריד מוח... $brainProgress%") }) }
+                        item {
+                            AssistChip(
+                                onClick = { Brain.cancel() },
+                                label = { Text("מוריד מוח $brainProgress% · הקש לביטול") })
+                        }
+                    }
+                    if (brainReady) {
+                        item {
+                            AssistChip(
+                                onClick = {
+                                    Brain.remove(this@MainActivity)
+                                    brainReady = Brain.available(this@MainActivity)
+                                    Toast.makeText(this@MainActivity, "המוח נמחק והשטח פונה", Toast.LENGTH_SHORT).show()
+                                },
+                                label = { Text("🧠 מחק מוח (${Brain.sizeMb(this@MainActivity)}MB)") })
+                        }
                     }
                 }
                 LazyVerticalGrid(columns = GridCells.Fixed(3)) {
@@ -375,9 +390,11 @@ class MainActivity : ComponentActivity() {
                                 }
                                 Toast.makeText(
                                     this@MainActivity,
-                                    "סווגו $moved תמונות לקטגוריה \"${name.trim()}\"",
+                                    if (moved > 0) "סווגו $moved תמונות לקטגוריה \"${name.trim()}\""
+                                    else "הקטגוריה נשמרה. עדיין אין התאמות - היא תתמלא ככל שהסריקה מתקדמת",
                                     Toast.LENGTH_LONG
                                 ).show()
+                                ScanWorker.enqueue(this@MainActivity)
                                 tick++
                             }
                         }

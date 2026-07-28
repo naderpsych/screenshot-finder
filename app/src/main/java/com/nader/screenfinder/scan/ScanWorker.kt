@@ -38,38 +38,92 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val total = dao.countAll()
         val done = AtomicInteger(dao.countScanned())
 
-        // ---- pass 1: quick sweep over everything, newest first ----
-        val rules = dao.rules()
-        while (true) {
-            val batch = dao.unscanned(4 * lanes)
-            if (batch.isEmpty()) break
-            runParallel(batch) { s -> fastPass(c, dao, s, rules) }
-            report(c, "סריקה מהירה: ${done.addAndGet(batch.size)} מתוך $total")
-        }
-
-        heal(c, dao)
-
-        // ---- pass 2: deep understanding, in the background ----
+        // first repair shots an earlier version left without hebrew text - they are the newest ones
         val deep = AtomicInteger(dao.countDeep())
         while (true) {
             val batch = dao.needDeep(2 * lanes)
             if (batch.isEmpty()) break
             runParallel(batch) { s -> deepPass(c, dao, s) }
-            report(c, "הבנה מעמיקה: ${deep.addAndGet(batch.size)} מתוך $total")
+            report(c, "משלים הבנה: ${deep.addAndGet(batch.size)} מתוך $total")
         }
 
+        // full processing, newest first: hebrew screenshots are worthless without the heavy engine
+        var sinceOrganize = 0
+        while (true) {
+            val batch = dao.unscanned(2 * lanes)
+            if (batch.isEmpty()) break
+            val rules = dao.rules()
+            runParallel(batch) { s -> fullPass(c, dao, s, rules) }
+            report(c, "נסרקו ${done.addAndGet(batch.size)} מתוך $total")
+            sinceOrganize += batch.size
+            if (sinceOrganize >= 800) {
+                sinceOrganize = 0
+                organize(dao)
+            }
+        }
+
+        heal(c, dao)
+
+        organize(dao)
+        brainPass(c, dao)
+        return Result.success()
+    }
+
+    private suspend fun organize(dao: ShotDao) {
         try {
             Learner.run(dao)
         } catch (e: Exception) {
         }
         try {
-            note("מארגן קבוצות...")
             Grouper.run(dao)
         } catch (e: Exception) {
         }
         autoOrganize(dao)
-        brainPass(c, dao)
-        return Result.success()
+    }
+
+    /** everything a screenshot needs, in one go: latin + hebrew/arabic text, vision, category */
+    private suspend fun fullPass(c: Context, dao: ShotDao, s: Shot, rules: List<UserRule>) {
+        val bmp = Meter.time(Meter.decode) { Scanner.load(c, s.id, 1200) }
+        if (bmp == null) {
+            dao.update(s.copy(scanned = true, deepDone = true))
+            return
+        }
+        try {
+            var text = Meter.time(Meter.latin) { Ocr.latin(bmp) }
+            if (text.length < Ocr.LATIN_THRESHOLD) {
+                val rtl = Meter.time(Meter.heavy) { Ocr.heavy(c, bmp) }
+                if (rtl.isNotBlank()) text = (text + "\n" + rtl).trim()
+            }
+            val emb = Meter.time(Meter.clip) { Clip.embed(c, bmp) }
+            val visual = emb?.let { Clip.tagsFrom(it) }
+            val mlLabels = if (text.length < 80) Ocr.labels(bmp) else emptyList()
+
+            var labels = (mlLabels.joinToString(" ") + " " + (visual?.words ?: "")).trim()
+            if (text.length < 80 && emb != null) {
+                labels = (labels + " " + borrowContext(dao, s, emb)).trim()
+            }
+            var (cat, src) = Categorizer.categorize(s.sourceApp, text, mlLabels, rules)
+            if (cat == "לא מסווג" && visual?.cat != null) cat = visual.cat
+
+            Meter.time(Meter.db) {
+                dao.update(
+                    s.copy(
+                        text = text,
+                        norm = Ocr.norm(text),
+                        labels = labels,
+                        category = s.userCat ?: cat,
+                        source = src,
+                        scanned = true,
+                        heavyOcr = true,
+                        emb = emb?.let { Vec.pack(it) },
+                        clipDone = emb != null,
+                        deepDone = true
+                    )
+                )
+            }
+        } finally {
+            bmp.recycle()
+        }
     }
 
     private suspend fun runParallel(batch: List<Shot>, block: suspend (Shot) -> Unit) = coroutineScope {
@@ -83,31 +137,6 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         }.forEach { it.await() }
     }
 
-    /** latin OCR only - about 0.1s per screenshot */
-    private suspend fun fastPass(c: Context, dao: ShotDao, s: Shot, rules: List<UserRule>) {
-        val bmp = Meter.time(Meter.decode) { Scanner.load(c, s.id, 1200) }
-        if (bmp == null) {
-            dao.update(s.copy(scanned = true, deepDone = true))
-            return
-        }
-        val text = try {
-            Meter.time(Meter.latin) { Ocr.latin(bmp) }
-        } finally {
-            bmp.recycle()
-        }
-        val (cat, src) = Categorizer.categorize(s.sourceApp, text, emptyList(), rules)
-        Meter.time(Meter.db) {
-            dao.update(
-                s.copy(
-                    text = text,
-                    norm = Ocr.norm(text),
-                    category = s.userCat ?: cat,
-                    source = src,
-                    scanned = true
-                )
-            )
-        }
-    }
 
     /** hebrew/arabic OCR when needed + visual fingerprint */
     private suspend fun deepPass(c: Context, dao: ShotDao, s: Shot) {

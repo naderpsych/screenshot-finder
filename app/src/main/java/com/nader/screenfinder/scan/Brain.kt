@@ -17,7 +17,34 @@ object Brain {
     private var llm: LlmInference? = null
     private var failed = false
 
+    @Volatile
+    private var cancelled = false
+
     fun available(c: Context): Boolean = File(c.filesDir, FILE).length() > 1_000_000
+
+    /** stop an in-flight download */
+    fun cancel() {
+        cancelled = true
+    }
+
+    /** free the space again */
+    @Synchronized
+    fun remove(c: Context): Boolean {
+        return try {
+            try {
+                llm?.close()
+            } catch (t: Throwable) {
+            }
+            llm = null
+            failed = false
+            File(c.filesDir, "$FILE.tmp").delete()
+            File(c.filesDir, FILE).delete()
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
+    fun sizeMb(c: Context): Long = File(c.filesDir, FILE).length() / (1024 * 1024)
 
     @Synchronized
     private fun get(c: Context): LlmInference? {
@@ -58,6 +85,7 @@ object Brain {
 
     suspend fun download(c: Context, onProgress: (Int) -> Unit): Boolean = withContext(Dispatchers.IO) {
         try {
+            cancelled = false
             val f = File(c.filesDir, FILE)
             val tmp = File(c.filesDir, "$FILE.tmp")
             var conn = URL(URL_STR).openConnection() as HttpURLConnection
@@ -77,6 +105,10 @@ object Brain {
                     var done = 0L
                     var n: Int
                     while (inp.read(buf).also { n = it } > 0) {
+                        if (cancelled) {
+                            tmp.delete()
+                            return@withContext false
+                        }
                         out.write(buf, 0, n)
                         done += n
                         if (total > 0) onProgress((done * 100 / total).toInt())

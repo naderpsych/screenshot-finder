@@ -22,7 +22,7 @@ object Ocr {
     private val labeler by lazy { ImageLabeling.getClient(ImageLabelerOptions.DEFAULT_OPTIONS) }
 
     // small pool so several images can go through the slow engine at once
-    private const val TESS_INSTANCES = 2
+    private const val TESS_INSTANCES = 3
     private val tessPool = ConcurrentLinkedQueue<TessBaseAPI>()
     private val tessGate = Semaphore(TESS_INSTANCES)
     private var tessReady = false
