@@ -121,7 +121,7 @@ class MainActivity : ComponentActivity() {
         }
         if (!granted) {
             Text(
-                "האפליקציה צריכה הרשאת גישה לכל התמונות.\nהגדרות > אפליקציות > חיפוש סקרינשוטים > הרשאות",
+                "האפליקציה צריכה הרשאת גישה לכל התמונות.\nהגדרות > אפליקציות > Screenote > הרשאות",
                 Modifier.padding(24.dp), color = Color.White
             )
             return
@@ -169,8 +169,8 @@ class MainActivity : ComponentActivity() {
         Box(Modifier.fillMaxSize().background(Bg)) {
             Column(Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
                 Text(
-                    "חיפוש סקרינשוטים",
-                    fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                    "Screenote",
+                    fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color.White,
                     modifier = Modifier.padding(top = 14.dp, bottom = 8.dp)
                 )
                 OutlinedTextField(

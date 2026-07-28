@@ -261,7 +261,7 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
 
     private fun info(msg: String): ForegroundInfo {
         val n: Notification = Notification.Builder(applicationContext, "scan")
-            .setContentTitle("סריקת סקרינשוטים")
+            .setContentTitle("Screenote")
             .setContentText(msg)
             .setSmallIcon(android.R.drawable.ic_menu_search)
             .setOngoing(true)
