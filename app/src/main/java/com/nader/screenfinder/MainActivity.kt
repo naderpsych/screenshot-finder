@@ -181,17 +181,33 @@ class MainActivity : ComponentActivity() {
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp)
                 )
-                if (fast.second > 0 && (fast.first < fast.second || deep < fast.second)) {
-                    Column(Modifier.padding(vertical = 4.dp)) {
-                        Text(
-                            if (fast.first < fast.second) "סריקה מהירה: ${fast.first} מתוך ${fast.second}"
-                            else "הבנה מעמיקה ברקע: $deep מתוך ${fast.second}",
-                            fontSize = 12.sp, color = Accent
-                        )
-                        if (speed.isNotBlank()) {
-                            Text(speed, fontSize = 11.sp, color = Color(0xFF8A94A6))
+                // always visible status - tap to restart scanning
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                        .background(Card, RoundedCornerShape(10.dp))
+                        .clickable {
+                            ScanWorker.enqueue(this@MainActivity)
+                            Toast.makeText(this@MainActivity, "הסריקה הופעלה", Toast.LENGTH_SHORT).show()
                         }
-                    }
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        when {
+                            fast.second == 0 -> "גרסה ${BuildConfig.VERSION_NAME} · מחפש סקרינשוטים..."
+                            fast.first < fast.second ->
+                                "גרסה ${BuildConfig.VERSION_NAME} · שלב 1 מהיר: ${fast.first} מתוך ${fast.second}"
+                            deep < fast.second ->
+                                "גרסה ${BuildConfig.VERSION_NAME} · שלב 2 מעמיק: $deep מתוך ${fast.second}"
+                            else -> "גרסה ${BuildConfig.VERSION_NAME} · הכל נסרק (${fast.second})"
+                        },
+                        fontSize = 13.sp, color = Accent, fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        speed.ifBlank { "מודד מהירות... (הקש כאן כדי להפעיל סריקה)" },
+                        fontSize = 11.sp, color = Color(0xFF8A94A6)
+                    )
                 }
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),

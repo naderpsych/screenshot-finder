@@ -33,7 +33,10 @@ android {
             signingConfig = signingConfigs.getByName("rel")
         }
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
