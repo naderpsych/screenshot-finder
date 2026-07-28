@@ -39,12 +39,23 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         val total = dao.countAll()
         val done = AtomicInteger(dao.countScanned())
 
-        // first repair shots an earlier version left without hebrew text - they are the newest ones
+        // the vision pipeline changed: fingerprints taken from whole screenshots must be redone
+        val prefs = c.getSharedPreferences("sf", Context.MODE_PRIVATE)
+        if (prefs.getInt("visionVer", 1) < 2) {
+            try {
+                dao.resetDeep()
+                prefs.edit().putInt("visionVer", 2).apply()
+            } catch (e: Exception) {
+            }
+        }
+
+        // shots that still miss vision or hebrew - newest first
         val deep = AtomicInteger(dao.countDeep())
+        val rules0 = dao.rules()
         while (true) {
             val batch = dao.needDeep(2 * lanes)
             if (batch.isEmpty()) break
-            runParallel(batch) { s -> deepPass(c, dao, s) }
+            runParallel(batch) { s -> fullPass(c, dao, s, rules0) }
             report(c, "משלים הבנה: ${deep.addAndGet(batch.size)} מתוך $total")
         }
 
@@ -92,7 +103,9 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         try {
             val (latinText, blocks) = Meter.time(Meter.latin) { Ocr.latinBlocks(bmp) }
             var text = latinText
-            if (text.length < Ocr.LATIN_THRESHOLD) {
+            if (s.heavyOcr && !s.text.isNullOrBlank()) {
+                text = s.text!!   // hebrew was already read for this shot, do not pay for it twice
+            } else if (text.length < Ocr.LATIN_THRESHOLD) {
                 val rtl = Meter.time(Meter.heavy) { Ocr.heavy(c, bmp) }
                 if (rtl.isNotBlank()) text = (text + "\n" + rtl).trim()
             }
@@ -159,54 +172,6 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
         }.forEach { it.await() }
     }
 
-
-    /** hebrew/arabic OCR when needed + visual fingerprint */
-    private suspend fun deepPass(c: Context, dao: ShotDao, s: Shot) {
-        var text = s.text ?: ""
-        val needHeavy = !s.heavyOcr && text.length < Ocr.LATIN_THRESHOLD
-        // when only the visual model is left there is no reason to decode a big bitmap
-        val bmp = Meter.time(Meter.decode) { Scanner.load(c, s.id, if (needHeavy) 1200 else 480) }
-        if (bmp == null) {
-            dao.update(s.copy(deepDone = true))
-            return
-        }
-        var heavy = s.heavyOcr
-        try {
-            if (needHeavy) {
-                val rtl = Meter.time(Meter.heavy) { Ocr.heavy(c, bmp) }
-                if (rtl.isNotBlank()) text = (text + "\n" + rtl).trim()
-                heavy = true
-            }
-            val emb = Meter.time(Meter.clip) { Clip.embed(c, bmp) }
-            val visual = emb?.let { Clip.tagsFrom(it) }
-            val mlLabels = if (text.length < 80) Ocr.labels(bmp) else emptyList()
-
-            var labels = (mlLabels.joinToString(" ") + " " + (visual?.words ?: "")).trim()
-            // a screenshot with almost no text borrows context from shots taken beside it
-            if (text.length < 80 && emb != null) {
-                labels = (labels + " " + borrowContext(dao, s, emb)).trim()
-            }
-            var (cat, src) = Categorizer.categorize(s.sourceApp, text, mlLabels, dao.rules())
-            if (cat == "לא מסווג") Brain.classify(c, text)?.let { cat = it }
-            if (cat == "לא מסווג" && visual?.cat != null) cat = visual.cat
-
-            dao.update(
-                s.copy(
-                    text = text,
-                    norm = Ocr.norm(text),
-                    labels = labels,
-                    category = s.userCat ?: cat,
-                    source = src ?: s.source,
-                    heavyOcr = heavy,
-                    emb = emb?.let { Vec.pack(it) },
-                    clipDone = emb != null,
-                    deepDone = true
-                )
-            )
-        } finally {
-            bmp.recycle()
-        }
-    }
 
     /** shots taken within a couple of minutes AND visually alike are the same subject */
     private suspend fun borrowContext(dao: ShotDao, s: Shot, emb: FloatArray): String {

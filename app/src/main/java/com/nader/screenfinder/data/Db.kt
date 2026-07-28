@@ -115,6 +115,9 @@ interface ShotDao {
     @Query("SELECT * FROM shots WHERE scanned=1 AND norm LIKE '%' || :kw || '%'")
     suspend fun candidates(kw: String): List<Shot>
 
+    @Query("UPDATE shots SET deepDone=0")
+    suspend fun resetDeep()
+
     @Query("SELECT * FROM shots WHERE scanned=1")
     suspend fun allScanned(): List<Shot>
 
