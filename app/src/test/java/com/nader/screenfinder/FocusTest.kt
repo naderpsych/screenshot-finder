@@ -31,12 +31,12 @@ class FocusTest {
         val r = Focus.analyze(900, 1800, feed)
         val crop = r.crop!!
         assertTrue("crop should cover the photo band, was $crop", crop.top >= 780 && crop.bottom <= 1540)
-        assertTrue("crop should be a real region", crop.height() > 400)
+        assertTrue("crop should be a real region", crop.height > 400)
     }
 
     @Test
     fun screenshotWithoutTextStillGivesAnArea() {
         val r = Focus.analyze(900, 1800, emptyList())
-        assertTrue(r.crop != null && r.crop!!.height() > 1000)
+        assertTrue(r.crop != null && r.crop!!.height > 1000)
     }
 }

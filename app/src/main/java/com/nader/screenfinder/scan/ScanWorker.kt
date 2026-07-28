@@ -117,7 +117,9 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
             // the visual model looks at the picture, not at the surrounding interface
             val view = focus.crop?.let { r ->
                 try {
-                    Bitmap.createBitmap(bmp, r.left, r.top, r.width().coerceAtLeast(8), r.height().coerceAtLeast(8))
+                    val top = r.top.coerceIn(0, bmp.height - 8)
+                    val h = r.height.coerceIn(8, bmp.height - top)
+                    Bitmap.createBitmap(bmp, 0, top, bmp.width, h)
                 } catch (e: Throwable) {
                     null
                 }

@@ -1,7 +1,5 @@
 package com.nader.screenfinder.scan
 
-import android.graphics.Rect
-
 /**
  * Decides what a screenshot is actually about.
  * A feed screenshot usually holds one whole post plus leftovers of its neighbours;
@@ -13,11 +11,16 @@ object Focus {
     private const val BOTTOM_CHROME = 0.06f
     private const val MIN_PHOTO = 0.14f
 
+    data class Box(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+        val width get() = right - left
+        val height get() = bottom - top
+    }
+
     data class Result(
         /** text that carries the subject - used for categories */
         val focusText: String,
         /** the picture inside the screenshot, if there is a clear one */
-        val crop: Rect?,
+        val crop: Box?,
         val blocksInFocus: Int
     )
 
@@ -28,7 +31,7 @@ object Focus {
 
         val body = blocks.filter { it.bottom > top && it.top < bottom && it.text.isNotBlank() }
         if (body.isEmpty()) {
-            return Result("", Rect(0, top, w, bottom), 0)
+            return Result("", Box(0, top, w, bottom), 0)
         }
 
         // weight by how central a block is, and distrust anything cut off at the edges
@@ -66,8 +69,8 @@ object Focus {
             bestLen = bottom - start
             bestStart = start
         }
-        val crop = if (bestLen >= h * MIN_PHOTO) Rect(0, bestStart, w, bestStart + bestLen)
-        else Rect(0, top, w, bottom)
+        val crop = if (bestLen >= h * MIN_PHOTO) Box(0, bestStart, w, bestStart + bestLen)
+        else Box(0, top, w, bottom)
 
         return Result(focusText, crop, keep.size)
     }
