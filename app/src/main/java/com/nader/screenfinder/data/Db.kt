@@ -200,5 +200,15 @@ abstract class Db : RoomDatabase() {
                 .addMigrations(M12, M23)
                 .build().also { inst = it }
         }
+
+        /** needed before replacing the file during a restore */
+        @Synchronized
+        fun close() {
+            try {
+                inst?.close()
+            } catch (e: Throwable) {
+            }
+            inst = null
+        }
     }
 }

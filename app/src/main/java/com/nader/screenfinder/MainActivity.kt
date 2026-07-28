@@ -57,6 +57,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import com.nader.screenfinder.data.Backup
 import com.nader.screenfinder.data.CatCount
 import com.nader.screenfinder.data.Db
 import com.nader.screenfinder.data.Shot
@@ -130,6 +135,35 @@ class MainActivity : ComponentActivity() {
         return words.joinToString(" ") { "$it*" }
     }
 
+    @Composable
+    private fun Ring(pct: Float, label: String, active: Boolean) {
+        val ring = if (active) Accent else Color(0xFF3A4252)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(contentAlignment = Alignment.Center) {
+                Canvas(Modifier.size(38.dp)) {
+                    val stroke = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round)
+                    drawArc(
+                        color = Color(0xFF262D3A), startAngle = -90f, sweepAngle = 360f,
+                        useCenter = false, style = stroke
+                    )
+                    if (pct > 0f) drawArc(
+                        color = ring, startAngle = -90f, sweepAngle = 360f * pct.coerceIn(0f, 1f),
+                        useCenter = false, style = stroke
+                    )
+                }
+                Text(
+                    "${(pct * 100).toInt()}%",
+                    fontSize = 10.sp,
+                    color = if (active) Color.White else Color(0xFF6B7383)
+                )
+            }
+            Text(
+                label, fontSize = 9.sp,
+                color = if (active) Accent else Color(0xFF6B7383)
+            )
+        }
+    }
+
     @OptIn(ExperimentalFoundationApi::class)
     @Composable
     fun Main() {
@@ -157,6 +191,7 @@ class MainActivity : ComponentActivity() {
         var cat by remember { mutableStateOf<String?>(null) }
         var shots by remember { mutableStateOf(listOf<Shot>()) }
         var cats by remember { mutableStateOf(listOf<CatCount>()) }
+        var emptyCats by remember { mutableStateOf(listOf<String>()) }
         var fast by remember { mutableStateOf(0 to 0) }
         var deep by remember { mutableStateOf(0) }
         var speed by remember { mutableStateOf("") }
@@ -169,12 +204,32 @@ class MainActivity : ComponentActivity() {
         var brainReady by remember { mutableStateOf(Brain.available(this)) }
         var brainProgress by remember { mutableStateOf<Int?>(null) }
 
+        // backup and restore of the scanning work (the pictures themselves stay untouched)
+        val exporter = rememberLauncherForActivityResult(
+            ActivityResultContracts.CreateDocument("application/octet-stream")
+        ) { uri ->
+            if (uri != null) scope.launch {
+                val msg = Backup.export(this@MainActivity, uri)
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+        val importer = rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) scope.launch {
+                val msg = Backup.import(this@MainActivity, uri)
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+
         LaunchedEffect(Unit) {
             while (true) {
                 fast = dao.countScanned() to dao.countAll()
                 deep = dao.countDeep()
                 speed = prefs.getString("speed", "") ?: ""
                 cats = dao.cats()
+                val filled = cats.mapNotNull { it.category }.toSet()
+                emptyCats = dao.rules().map { it.name }.distinct().filter { it !in filled }
                 tick++
                 delay(3000)
             }
@@ -226,57 +281,33 @@ class MainActivity : ComponentActivity() {
                     singleLine = true,
                     shape = RoundedCornerShape(24.dp)
                 )
-                // progress card: what stage we are in and how far it got
+                // compact progress: one ring per stage
                 val total = fast.second
                 val doneCount = fast.first
                 val pct = if (total > 0) doneCount.toFloat() / total else 0f
-                val finished = total > 0 && doneCount >= total
-                Column(
+                val scanning = total > 0 && doneCount < total
+                Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 6.dp)
-                        .background(Card, RoundedCornerShape(12.dp))
-                        .clickable { showAbout = true }
-                        .padding(10.dp)
+                        .padding(vertical = 4.dp)
+                        .clickable { showAbout = true },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                    Ring(pct, "סריקה", active = scanning || pct >= 1f)
+                    Ring(if (scanning) 0f else 1f, "ארגון", active = !scanning && total > 0)
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            if (finished) "✓ שלב 2 · סריקה עמוקה הושלמה"
-                            else if (total == 0) "מכין רשימת סקרינשוטים..."
-                            else "שלב 2 · סריקה עמוקה — קורא טקסט ורואה תמונות",
-                            fontSize = 13.sp, color = Accent, fontWeight = FontWeight.Bold
-                        )
-                        Text("ⓘ", fontSize = 15.sp, color = Accent)
-                    }
-                    if (total > 0) {
-                        LinearProgressIndicator(
-                            progress = { pct },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 8.dp, bottom = 4.dp)
-                                .height(8.dp)
-                                .clip(RoundedCornerShape(4.dp)),
-                            color = Accent,
-                            trackColor = Color(0xFF2A3140)
-                        )
-                        Text(
-                            "${(pct * 100).toInt()}%  ·  $doneCount מתוך $total" +
-                                if (finished) "  ·  שלב 3: מארגן קבוצות" else "",
+                            if (total == 0) "מחפש סקרינשוטים..."
+                            else if (scanning) "$doneCount מתוך $total"
+                            else "הכל מוכן · $total",
                             fontSize = 12.sp, color = Color.White
                         )
+                        Text(
+                            "v${BuildConfig.VERSION_NAME} · ⓘ פרטים",
+                            fontSize = 10.sp, color = Color(0xFF8A94A6)
+                        )
                     }
-                    Text(
-                        "✓ שלב 1 · סיווג ראשוני לפי מקור הצילום — הושלם",
-                        fontSize = 11.sp, color = Color(0xFF7BC67B),
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                    Text(
-                        speed.ifBlank { "הקש לפרטים על האפליקציה" },
-                        fontSize = 11.sp, color = Color(0xFF8A94A6)
-                    )
                 }
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -293,6 +324,13 @@ class MainActivity : ComponentActivity() {
                             selected = cat == cc.category,
                             onClick = { cat = cc.category; query = "" },
                             label = { Text("${cc.category} (${cc.cnt})") })
+                    }
+                    // categories the user created that have no matches yet still deserve a place
+                    rowItems(emptyCats) { name ->
+                        FilterChip(
+                            selected = cat == name,
+                            onClick = { cat = name; query = "" },
+                            label = { Text("$name (0)") })
                     }
                     item {
                         AssistChip(onClick = { showRule = true }, label = { Text("+ קטגוריה") })
@@ -412,7 +450,10 @@ class MainActivity : ComponentActivity() {
                 text = {
                     Column {
                         LazyColumn(Modifier.heightIn(max = 260.dp)) {
-                            rowItems(cats.mapNotNull { it.category }.filter { it != "לא מסווג" }) { name ->
+                            rowItems(
+                                (emptyCats + cats.mapNotNull { it.category })
+                                    .filter { it != "לא מסווג" }.distinct()
+                            ) { name ->
                                 Text(
                                     name, color = Color.White, fontSize = 16.sp,
                                     modifier = Modifier.fillMaxWidth().clickable { apply(name) }
@@ -466,6 +507,15 @@ class MainActivity : ComponentActivity() {
                                     "קובץ בנפח כ-520MB שמוריד מודל שפה קטן לטלפון. הוא קורא טקסטים שהכללים " +
                                     "לא הצליחו לסווג ומחליט לפי הבנה. אפשר להוריד, לבטל באמצע, ולמחוק בכל רגע.\n\n" +
 
+                                    "גיבוי ושחזור\n" +
+                                    "\"גבה\" שומר קובץ עם כל תוצאות הסריקה - הטקסטים, הקטגוריות והזיהוי " +
+                                    "הוויזואלי. אם תמחק ותתקין מחדש, \"שחזר\" יחזיר הכל בלי לסרוק שוב. " +
+                                    "התמונות עצמן לא נכללות בגיבוי - הן ממילא בטלפון.\n\n" +
+
+                                    "מצב סריקה\n" +
+                                    "חסכוני (ברירת מחדל): הסריקה איטית יותר אבל הטלפון נשאר זמין לשימוש. " +
+                                    "מהיר: מנצל יותר ליבות, כדאי כשהטלפון בטעינה ולא בשימוש.\n\n" +
+
                                     "סקרינשוט חדש נסרק אוטומטית. סקרינשוט שנמחק מהטלפון נעלם גם מכאן.",
                                 fontSize = 13.sp, color = Color.White
                             )
@@ -473,11 +523,32 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        ScanWorker.enqueue(this@MainActivity)
-                        Toast.makeText(this@MainActivity, "הסריקה הופעלה", Toast.LENGTH_SHORT).show()
-                        showAbout = false
-                    }) { Text("הפעל סריקה") }
+                    Column {
+                        Row {
+                            TextButton(onClick = { exporter.launch("screenote-backup.db") }) { Text("גבה") }
+                            TextButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text("שחזר") }
+                        }
+                        Row {
+                            TextButton(onClick = {
+                                val on = !prefs.getBoolean("turbo", false)
+                                prefs.edit().putBoolean("turbo", on).apply()
+                                Toast.makeText(
+                                    this@MainActivity,
+                                    if (on) "מצב מהיר - הטלפון עלול להיות איטי בזמן סריקה"
+                                    else "מצב חסכוני - סריקה איטית יותר, הטלפון נשאר זמין",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                showAbout = false
+                            }) {
+                                Text(if (prefs.getBoolean("turbo", false)) "עבור למצב חסכוני" else "עבור למצב מהיר")
+                            }
+                            TextButton(onClick = {
+                                ScanWorker.enqueue(this@MainActivity)
+                                Toast.makeText(this@MainActivity, "הסריקה הופעלה", Toast.LENGTH_SHORT).show()
+                                showAbout = false
+                            }) { Text("הפעל סריקה") }
+                        }
+                    }
                 },
                 dismissButton = { TextButton(onClick = { showAbout = false }) { Text("סגור") } }
             )
@@ -492,12 +563,18 @@ class MainActivity : ComponentActivity() {
                 text = {
                     Column {
                         OutlinedTextField(name, { name = it }, placeholder = { Text("שם הקטגוריה") })
-                        OutlinedTextField(kw, { kw = it }, placeholder = { Text("מילות מפתח, מופרדות בפסיק") })
+                        OutlinedTextField(
+                            kw, { kw = it },
+                            placeholder = { Text("מילות מפתח (לא חובה)") })
+                        Text(
+                            "אפשר ליצור קטגוריה ריקה ולשייך אליה תמונות ידנית",
+                            fontSize = 11.sp, color = Color(0xFF8A94A6)
+                        )
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        if (name.isNotBlank() && kw.isNotBlank()) {
+                        if (name.isNotBlank()) {
                             scope.launch {
                                 dao.addRule(UserRule(name = name.trim(), keywords = kw))
                                 var moved = 0
@@ -512,7 +589,7 @@ class MainActivity : ComponentActivity() {
                                 Toast.makeText(
                                     this@MainActivity,
                                     if (moved > 0) "סווגו $moved תמונות לקטגוריה \"${name.trim()}\""
-                                    else "הקטגוריה נשמרה. עדיין אין התאמות - היא תתמלא ככל שהסריקה מתקדמת",
+                                    else "הקטגוריה \"${name.trim()}\" נוצרה וממתינה - אפשר לשייך אליה תמונות מהצפייה",
                                     Toast.LENGTH_LONG
                                 ).show()
                                 ScanWorker.enqueue(this@MainActivity)

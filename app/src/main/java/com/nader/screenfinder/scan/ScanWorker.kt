@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Process
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
@@ -17,17 +18,40 @@ import com.nader.screenfinder.data.Db
 import com.nader.screenfinder.data.Shot
 import com.nader.screenfinder.data.ShotDao
 import com.nader.screenfinder.data.UserRule
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import java.util.concurrent.Executors
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.util.concurrent.atomic.AtomicInteger
 
 class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
 
-    /** how many screenshots are processed at the same time */
-    private val lanes = (Runtime.getRuntime().availableProcessors() - 2).coerceIn(2, 4)
-    private val gate = Semaphore(lanes)
+    /**
+     * How many screenshots are processed at the same time.
+     * Default stays low and at background priority so the phone keeps feeling responsive.
+     */
+    private val turbo by lazy {
+        applicationContext.getSharedPreferences("sf", Context.MODE_PRIVATE)
+            .getBoolean("turbo", false)
+    }
+    private val lanes by lazy {
+        val cores = Runtime.getRuntime().availableProcessors()
+        if (turbo) (cores - 2).coerceIn(2, 4) else (cores / 4).coerceIn(1, 2)
+    }
+    private val gate by lazy { Semaphore(lanes) }
+
+    /** low priority threads: the system hands the screen the cpu before it hands it to us */
+    private val pool by lazy {
+        Executors.newFixedThreadPool(lanes) { r ->
+            Thread {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                r.run()
+            }.apply { priority = Thread.MIN_PRIORITY }
+        }.asCoroutineDispatcher()
+    }
 
     override suspend fun doWork(): Result {
         val c = applicationContext
@@ -165,13 +189,15 @@ class ScanWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, 
 
     private suspend fun runParallel(batch: List<Shot>, block: suspend (Shot) -> Unit) = coroutineScope {
         batch.map { s ->
-            async {
+            async(pool) {
                 try {
                     gate.withPermit { block(s) }
                 } catch (e: Throwable) {
                 }
             }
         }.forEach { it.await() }
+        // a short breath between batches keeps the phone usable while scanning
+        delay(if (turbo) 15 else 120)
     }
 
 
