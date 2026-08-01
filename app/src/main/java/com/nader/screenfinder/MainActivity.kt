@@ -194,6 +194,7 @@ class MainActivity : ComponentActivity() {
         var emptyCats by remember { mutableStateOf(listOf<String>()) }
         var fast by remember { mutableStateOf(0 to 0) }
         var deep by remember { mutableStateOf(0) }
+        var organized by remember { mutableStateOf(0) }
         var speed by remember { mutableStateOf("") }
         val prefs = remember { getSharedPreferences("sf", MODE_PRIVATE) }
         var showRule by remember { mutableStateOf(false) }
@@ -226,6 +227,7 @@ class MainActivity : ComponentActivity() {
             while (true) {
                 fast = dao.countScanned() to dao.countAll()
                 deep = dao.countDeep()
+                organized = dao.countOrganized()
                 speed = prefs.getString("speed", "") ?: ""
                 cats = dao.cats()
                 val filled = cats.mapNotNull { it.category }.toSet()
@@ -253,17 +255,19 @@ class MainActivity : ComponentActivity() {
             val packed = Vec.pack(qv)
             val all = EmbCache.get(dao)
             val sims = withContext(Dispatchers.Default) {
-                all.mapNotNull { e -> e.emb?.let { b -> e.id to Vec.cos(packed, b) } }
-                    .filter { it.second > 0.20f }
+                val scored = all.mapNotNull { e -> e.emb?.let { b -> e.id to Vec.cos(packed, b) } }
                     .sortedByDescending { it.second }
-                    .take(200)
+                if (scored.isEmpty()) return@withContext emptyList()
+                // only clearly confident matches: weak similarity is noise, not meaning
+                val best = scored.first().second
+                scored.filter { it.second >= 0.26f && it.second >= best - 0.035f }.take(60)
             }
-            val score = sims.toMap()
             val textIds = textHits.map { it.id }.toSet()
             val visual = if (sims.isEmpty()) emptyList()
             else dao.byIds(sims.map { it.first }).filter { it.id !in textIds }
-            shots = (textHits + visual)
-                .sortedByDescending { (score[it.id] ?: 0f) + if (it.id in textIds) 0.15f else 0f }
+            val order = sims.map { it.first }.withIndex().associate { it.value to it.index }
+            // what the screenshot literally says wins over what it looks like
+            shots = textHits + visual.sortedBy { order[it.id] ?: Int.MAX_VALUE }
         }
 
         Box(Modifier.fillMaxSize().background(Bg)) {
@@ -295,7 +299,10 @@ class MainActivity : ComponentActivity() {
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Ring(pct, "סריקה", active = scanning || pct >= 1f)
-                    Ring(if (scanning) 0f else 1f, "ארגון", active = !scanning && total > 0)
+                    Ring(
+                        if (total > 0) organized.toFloat() / total else 0f,
+                        "מסווגות", active = organized > 0
+                    )
                     Column(Modifier.weight(1f)) {
                         Text(
                             if (total == 0) "מחפש סקרינשוטים..."
@@ -334,44 +341,6 @@ class MainActivity : ComponentActivity() {
                     }
                     item {
                         AssistChip(onClick = { showRule = true }, label = { Text("+ קטגוריה") })
-                    }
-                    if (!brainReady && brainProgress == null) {
-                        item {
-                            AssistChip(
-                                onClick = {
-                                    brainProgress = 0
-                                    scope.launch {
-                                        val ok = Brain.download(this@MainActivity) { p -> brainProgress = p }
-                                        brainProgress = null
-                                        brainReady = Brain.available(this@MainActivity)
-                                        Toast.makeText(
-                                            this@MainActivity,
-                                            if (ok) "המוח הותקן! הסיווג החכם ירוץ ברקע" else "ההורדה נכשלה, נסה שוב על WiFi",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                        if (ok) ScanWorker.enqueue(this@MainActivity)
-                                    }
-                                },
-                                label = { Text("🧠 הורד מוח AI (~520MB, על WiFi)") })
-                        }
-                    }
-                    if (brainProgress != null) {
-                        item {
-                            AssistChip(
-                                onClick = { Brain.cancel() },
-                                label = { Text("מוריד מוח $brainProgress% · הקש לביטול") })
-                        }
-                    }
-                    if (brainReady) {
-                        item {
-                            AssistChip(
-                                onClick = {
-                                    Brain.remove(this@MainActivity)
-                                    brainReady = Brain.available(this@MainActivity)
-                                    Toast.makeText(this@MainActivity, "המוח נמחק והשטח פונה", Toast.LENGTH_SHORT).show()
-                                },
-                                label = { Text("🧠 מחק מוח (${Brain.sizeMb(this@MainActivity)}MB)") })
-                        }
                     }
                 }
                 LazyVerticalGrid(columns = GridCells.Fixed(3)) {
@@ -527,6 +496,30 @@ class MainActivity : ComponentActivity() {
                         Row {
                             TextButton(onClick = { exporter.launch("screenote-backup.db") }) { Text("גבה") }
                             TextButton(onClick = { importer.launch(arrayOf("*/*")) }) { Text("שחזר") }
+                            when {
+                                brainProgress != null -> TextButton(onClick = { Brain.cancel() }) {
+                                    Text("בטל הורדה $brainProgress%")
+                                }
+                                brainReady -> TextButton(onClick = {
+                                    Brain.remove(this@MainActivity)
+                                    brainReady = Brain.available(this@MainActivity)
+                                    Toast.makeText(this@MainActivity, "המוח נמחק והשטח פונה", Toast.LENGTH_SHORT).show()
+                                }) { Text("מחק מוח") }
+                                else -> TextButton(onClick = {
+                                    brainProgress = 0
+                                    scope.launch {
+                                        val ok = Brain.download(this@MainActivity) { p -> brainProgress = p }
+                                        brainProgress = null
+                                        brainReady = Brain.available(this@MainActivity)
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            if (ok) "המוח הותקן" else "ההורדה נכשלה, נסה שוב על WiFi",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                        if (ok) ScanWorker.enqueue(this@MainActivity)
+                                    }
+                                }) { Text("הורד מוח 520MB") }
+                            }
                         }
                         Row {
                             TextButton(onClick = {

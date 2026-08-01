@@ -92,6 +92,10 @@ interface ShotDao {
     @Query("SELECT COUNT(*) FROM shots WHERE deepDone=1")
     suspend fun countDeep(): Int
 
+    /** shots that already landed in a real category, not the provisional one and not unclassified */
+    @Query("SELECT COUNT(*) FROM shots WHERE deepDone=1 AND category IS NOT NULL AND category != 'לא מסווג'")
+    suspend fun countOrganized(): Int
+
     // ---- browsing / search ----
     @Query("SELECT * FROM shots ORDER BY date DESC LIMIT 300")
     suspend fun recent(): List<Shot>
